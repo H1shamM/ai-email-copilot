@@ -32,166 +32,86 @@
 
 ---
 
-## 🔄 Week 3: Core Chat Logic + Prompt Engineering (Apr 5-11) - IN PROGRESS
+## 🔄 Week 3: Telegram Integration + Draft Replies (Apr 5-11) - IN PROGRESS
 
-**Goal:** Build draft reply generation and basic web interface
+**Pivot (2026-04-24):** Original plan was Flask web UI. Replaced with **Telegram-only interface** (webhook into FastAPI, single-user auth, approve-before-send for replies, push notifications for important emails). Detailed plan: `~/.claude/plans/concurrent-napping-crescent.md`.
+
+**Goal:** Use the Email Copilot entirely from Telegram — pull commands + push notifications + draft reply approval flow.
 
 ### Tasks Breakdown
 
-#### Task 1: Draft Reply Generation
-**Branch:** `feature/draft-reply-generation`  
-**Status:** 🔲 Not Started  
+#### Story A: Telegram bot scaffolding + webhook + single-user auth
+**Branch:** `feature/telegram-bot-scaffolding`
+**Status:** 🔲 Not Started
+**Size:** M
 **Scope:**
-- Create `src/ai/reply_generator.py`
-- Implement 3-tone reply system (professional, friendly, brief)
-- Add prompt templates for each tone
-- Store drafts in database
-- Write unit tests
-
-**Files to Create/Modify:**
-- `src/ai/reply_generator.py` (new)
-- `src/database/db.py` (add draft methods)
-- `tests/test_reply_generator.py` (new)
-
-**Test Coverage Target:** >80%
-
-**PR Description Template:**
-```
-## Draft Reply Generation
-
-Implements AI-powered reply drafting with 3 tone options.
-
-### Changes
-- Added reply_generator.py with tone-specific prompts
-- Extended database with draft_replies table
-- Added unit tests for all tone variations
-
-### Testing
-- Unit tests: 12 passing
-- Coverage: 85%
-
-### Examples
-[Show example generated replies]
-```
+- Add `python-telegram-bot>=21.0` dep
+- `app/telegram/{bot,handlers}.py` — Application instance, `/start`, `/help`, auth guard decorator
+- `POST /telegram/webhook` in `app/main.py` with `secret_token` verification
+- Auto-register webhook with Telegram on FastAPI startup
+- `telegram_users` table in `app/database/db.py`
+- Single-user auth via `TELEGRAM_AUTHORIZED_CHAT_ID` env var; unauthorized chats silently dropped
 
 ---
 
-#### Task 2: Thread Context Management
-**Branch:** `feature/thread-context`  
-**Status:** 🔲 Not Started  
+#### Story B: Pull commands — `/unread`, `/analyze`, `/inbox`
+**Branch:** `feature/telegram-pull-commands`
+**Status:** 🔲 Not Started
+**Size:** M
 **Scope:**
-- Fetch full email threads from Gmail
-- Parse thread history
-- Pass context to reply generator
-- Store thread relationships in DB
-
-**Files to Create/Modify:**
-- `src/email/thread_manager.py` (new)
-- `src/database/db.py` (add thread methods)
-- `tests/test_thread_manager.py` (new)
+- `/unread` — fetch + return numbered list with sender/subject/snippet
+- `/analyze` — run Claude on unprocessed emails, return per-email category/priority/summary
+- `/inbox` — last N analyzed emails from DB with priority indicators
+- `app/telegram/formatting.py` — MarkdownV2 escaping, 4096-char chunking
 
 ---
 
-#### Task 3: Prompt Engineering & Testing
-**Branch:** `feature/prompt-optimization`  
-**Status:** 🔲 Not Started  
+#### Story C: Draft reply generation + approve-before-send (subsumes original Task 1)
+**Branch:** `feature/telegram-reply-flow`
+**Status:** 🔲 Not Started
+**Size:** L
 **Scope:**
-- Test different prompt variations
-- Measure reply quality (manual review)
-- Optimize token usage
-- Document best-performing prompts
-- Add prompt caching
-
-**Files to Create/Modify:**
-- `docs/PROMPTS.md` (new - document prompts)
-- `src/ai/prompt_templates.py` (new)
-- `tests/test_prompts.py` (new)
+- `app/ai/reply_generator.py` — 3-tone replies (professional / friendly / brief)
+- `app/ai/prompts.py` — externalize tone prompt templates
+- `app/gmail/service.py` — add `send_reply(thread_id, message_id, body)` with `In-Reply-To` header
+- `app/database/db.py` — `insert_draft_reply`, `update_draft_status`, `get_draft_by_id`
+- `/reply <email_id>` command shows 3 drafts with inline keyboard: Approve / Edit / Skip / Regenerate
+- `app/telegram/conversations.py` — `ConversationHandler` for the edit flow
+- Approve → `send_reply()` → mark sent in DB
 
 ---
 
-#### Task 4: Basic Web Interface - Backend API
-**Branch:** `feature/web-api`  
-**Status:** 🔲 Not Started  
+#### Story D: Push notifications for important emails
+**Branch:** `feature/telegram-push-notifications`
+**Status:** 🔲 Not Started
+**Size:** M
 **Scope:**
-- Set up Flask application
-- Create REST API endpoints:
-  - GET /api/emails
-  - GET /api/email/<id>
-  - POST /api/email/<id>/replies
-  - POST /api/email/<id>/send
-- Add CORS support
-- Error handling
-
-**Files to Create/Modify:**
-- `src/ui/app.py` (new)
-- `src/ui/routes.py` (new)
-- `tests/test_api.py` (new)
+- Add `apscheduler` dep
+- `app/telegram/push.py` — scheduled job: every `TELEGRAM_PUSH_INTERVAL_MINUTES` minutes, fetch unread → analyze → notify if priority ≥ 4
+- `notified_at` column on `emails` table
+- Notification includes sender / subject / summary + inline "Generate Reply" + "Mark Done" buttons
+- `/pause` and `/resume` commands toggle scheduler
 
 ---
 
-#### Task 5: Basic Web Interface - Frontend
-**Branch:** `feature/web-frontend`  
-**Status:** 🔲 Not Started  
-**Scope:**
-- Create HTML templates
-- Email list view
-- Email detail view with replies
-- Send email functionality
-- Basic CSS styling
+### Already Shipped (during bootstrap)
 
-**Files to Create/Modify:**
-- `src/ui/templates/dashboard.html` (new)
-- `src/ui/templates/email_detail.html` (new)
-- `src/ui/static/style.css` (new)
-- `src/ui/static/app.js` (new)
-
----
-
-#### Task 6: Integration Testing
-**Branch:** `feature/week3-integration-tests`  
-**Status:** 🔲 Not Started  
-**Scope:**
-- End-to-end tests for reply flow
-- Test with real Gmail API (sandboxed)
-- Test with real Claude API (small dataset)
-- Performance testing (response times)
-
-**Files to Create/Modify:**
-- `tests/integration/test_reply_flow.py` (new)
-- `tests/integration/test_full_pipeline.py` (new)
-
----
-
-#### Task 7: CI/CD Setup
-**Branch:** `feature/github-actions`  
-**Status:** 🔲 Not Started  
-**Scope:**
-- Create GitHub Actions workflows
-- Automated testing on PRs
-- Code linting (black, flake8)
-- Type checking (mypy)
-- Coverage reports
-
-**Files to Create/Modify:**
-- `.github/workflows/tests.yml` (new)
-- `.github/workflows/lint.yml` (new)
-- `.github/workflows/type-check.yml` (new)
-- `.coveragerc` (new)
-- `pyproject.toml` (new)
+- ✅ **CI/CD** (was Task 7) — `tests.yml` + `lint.yml` shipped 2026-04-23 in #10
+- ✅ **REST API pipeline** (was Task 4 backend) — fetch/analyze endpoints shipped in #8 (kept for backend testing; not the UX)
 
 ---
 
 ### Week 3 Success Criteria
 
 By end of week, must demonstrate:
-- [x] Generate 3-tone draft replies for any email
-- [x] Replies consider thread context
-- [x] Web interface displays emails and drafts
-- [x] Can edit and send replies through UI
-- [x] All features have >80% test coverage
-- [x] CI pipeline runs on every PR
+- [ ] Authorized user can `/start` and get a welcome from the bot (Story A)
+- [ ] `/unread` and `/analyze` return formatted email summaries in Telegram (Story B)
+- [ ] `/reply <id>` flow generates 3 drafts and sends via Gmail after approval (Story C)
+- [ ] Bot proactively notifies on priority ≥ 4 emails (Story D)
+- [ ] Coverage stays ≥80%
+- [ ] CI green on every PR
 
-**Deliverable:** 🎯 Can generate draft replies and basic web UI working
+**Deliverable:** 🎯 Email Copilot fully driven from Telegram
 
 ---
 

@@ -767,12 +767,14 @@ if __name__ == '__main__':
 
 ---
 
-## Week 3: Core Chat Logic + Prompt Engineering (Apr 5-11)
+## Week 3: Telegram Integration + Draft Replies (Apr 5-11)
+
+> **Pivot (2026-04-24):** Replaced "basic web interface" goal with a Telegram-only UX. Webhook into existing FastAPI, single-user auth, approve-before-send for replies, push notifications for high-priority emails. Story breakdown lives in `docs/PROGRESS.md`. The Flask + HTML samples below remain as historical reference only — they are not implemented.
 
 ### Goals
 - ✅ Generate draft replies
-- ✅ Test different prompt templates
-- ✅ Basic web interface working
+- ✅ Telegram bot as sole user interface (replaces web UI)
+- ✅ Push notifications for important emails
 
 ### Tasks
 
@@ -917,8 +919,8 @@ Create `src/ui/templates/dashboard.html`:
 - Document best prompts
 
 ### Deliverable
-- Working web interface
-- Can generate 3-tone replies
+- Telegram bot as primary interface (commands + push notifications + approve-before-send)
+- Can generate 3-tone replies via `/reply <id>` flow
 - Prompt templates documented
 
 ---
