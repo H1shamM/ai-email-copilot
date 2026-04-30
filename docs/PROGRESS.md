@@ -42,7 +42,7 @@
 
 #### Story A: Telegram bot scaffolding + webhook + single-user auth
 **Branch:** `feature/telegram-bot-scaffolding`
-**Status:** 🔲 Not Started
+**Status:** ✅ Complete (PR #14, 2026-04-30)
 **Size:** M
 **Scope:**
 - Add `python-telegram-bot>=21.0` dep
@@ -104,7 +104,7 @@
 ### Week 3 Success Criteria
 
 By end of week, must demonstrate:
-- [ ] Authorized user can `/start` and get a welcome from the bot (Story A)
+- [x] Authorized user can `/start` and get a welcome from the bot (Story A)
 - [ ] `/unread` and `/analyze` return formatted email summaries in Telegram (Story B)
 - [ ] `/reply <id>` flow generates 3 drafts and sends via Gmail after approval (Story C)
 - [ ] Bot proactively notifies on priority ≥ 4 emails (Story D)
