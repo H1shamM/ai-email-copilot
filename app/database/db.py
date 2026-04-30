@@ -88,6 +88,12 @@ def init_db():
             value TEXT NOT NULL,
             updated_at TEXT DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS telegram_users (
+            chat_id INTEGER PRIMARY KEY,
+            created_at TEXT DEFAULT (datetime('now')),
+            last_seen_at TEXT DEFAULT (datetime('now'))
+        );
     """)
     conn.close()
 
@@ -169,5 +175,27 @@ def get_unprocessed_emails() -> list[dict]:
     try:
         rows = conn.execute("SELECT * FROM emails WHERE processed_at IS NULL").fetchall()
         return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_or_create_telegram_user(chat_id: int) -> dict:
+    """Insert the chat_id if missing, bump last_seen_at, return the row."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO telegram_users (chat_id) VALUES (?)",
+            (chat_id,),
+        )
+        conn.execute(
+            "UPDATE telegram_users SET last_seen_at = ? WHERE chat_id = ?",
+            (datetime.now().isoformat(), chat_id),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM telegram_users WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        return dict(row)
     finally:
         conn.close()
