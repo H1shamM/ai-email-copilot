@@ -8,3 +8,4 @@ anthropic
 pydantic
 python-dateutil
 httpx
+python-telegram-bot>=21.0

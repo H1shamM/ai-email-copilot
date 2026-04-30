@@ -10,7 +10,14 @@ def test_init_db_creates_tables():
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     }
     conn.close()
-    expected = {"emails", "draft_replies", "calendar_events", "followups", "user_preferences"}
+    expected = {
+        "emails",
+        "draft_replies",
+        "calendar_events",
+        "followups",
+        "user_preferences",
+        "telegram_users",
+    }
     assert expected.issubset(tables)
 
 
@@ -111,3 +118,20 @@ def test_get_unprocessed_emails_excludes_analyzed():
     unprocessed_ids = {e["gmail_message_id"] for e in db.get_unprocessed_emails()}
     assert "raw" in unprocessed_ids
     assert "done" not in unprocessed_ids
+
+
+def test_get_or_create_telegram_user_creates_on_first_call():
+    user = db.get_or_create_telegram_user(123456789)
+    assert user["chat_id"] == 123456789
+    assert user["created_at"] is not None
+    assert user["last_seen_at"] is not None
+
+
+def test_get_or_create_telegram_user_bumps_last_seen():
+    first = db.get_or_create_telegram_user(987654321)
+    second = db.get_or_create_telegram_user(987654321)
+    assert first["chat_id"] == second["chat_id"]
+    # last_seen_at must have advanced (or at least not gone backwards)
+    assert second["last_seen_at"] >= first["last_seen_at"]
+    # created_at must NOT change on a re-call
+    assert first["created_at"] == second["created_at"]

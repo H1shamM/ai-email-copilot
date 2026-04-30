@@ -1,19 +1,56 @@
+import logging
+import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, Query  # noqa: E402
+from fastapi import FastAPI, Header, HTTPException, Query, Request  # noqa: E402
 
 from app.gmail.service import get_recent_emails  # noqa: E402
 from app.ai.analyzer import analyze_email  # noqa: E402
 from app.database import db  # noqa: E402
+from app.telegram import bot as telegram_bot  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AI Email Copilot")
 
 
 @app.on_event("startup")
-def startup():
+async def startup():
     db.init_db()
+
+    webhook_url = os.getenv("TELEGRAM_WEBHOOK_URL")
+    secret_token = os.getenv("TELEGRAM_WEBHOOK_SECRET")
+    if not webhook_url:
+        logger.warning("TELEGRAM_WEBHOOK_URL not set; skipping Telegram webhook registration")
+        return
+
+    await telegram_bot.initialize()
+    application = telegram_bot.get_application()
+    await application.bot.set_webhook(url=webhook_url, secret_token=secret_token)
+    logger.info("Telegram webhook registered at %s", webhook_url)
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    await telegram_bot.shutdown()
+
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(
+    request: Request,
+    x_telegram_bot_api_secret_token: str | None = Header(default=None),
+):
+    """Receive updates from Telegram and dispatch through the bot Application."""
+    expected_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET")
+    if expected_secret and x_telegram_bot_api_secret_token != expected_secret:
+        raise HTTPException(status_code=403, detail="Invalid secret token")
+
+    payload = await request.json()
+    await telegram_bot.process_update_from_json(payload)
+    return {"ok": True}
 
 
 @app.get("/")

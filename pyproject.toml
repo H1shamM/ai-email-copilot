@@ -14,6 +14,7 @@ omit = [
     "app/*/__init__.py",
     "app/main.py",
     "app/gmail/auth.py",       # OAuth flow — covered by integration tests
+    "app/telegram/bot.py",     # Application wiring — covered by manual e2e
 ]
 
 [tool.coverage.report]
