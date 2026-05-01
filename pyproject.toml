@@ -5,7 +5,10 @@ target-version = ["py310", "py311", "py312"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --tb=short"
+addopts = ["-v", "--tb=short", "-m", "not integration"]
+markers = [
+    "integration: opt-in tests that hit real APIs (Gmail, Claude). Run with `pytest -m integration`. Excluded by default.",
+]
 
 [tool.coverage.run]
 source = ["app"]

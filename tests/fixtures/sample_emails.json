@@ -1,0 +1,38 @@
+[
+  {
+    "id": "msg_001",
+    "thread_id": "thread_001",
+    "sender": "alice@example.com",
+    "subject": "Q2 planning sync",
+    "date": "2026-04-15T09:00:00Z",
+    "snippet": "Can we move the planning sync to Thursday?",
+    "body": "Hi,\n\nCan we move the Q2 planning sync to Thursday at 2pm? I have a conflict on Wednesday.\n\nThanks,\nAlice"
+  },
+  {
+    "id": "msg_002",
+    "thread_id": "thread_002",
+    "sender": "newsletter@medium.com",
+    "subject": "This week in AI",
+    "date": "2026-04-16T07:30:00Z",
+    "snippet": "Top stories from the AI community this week...",
+    "body": "Top stories from the AI community this week. Click to read more."
+  },
+  {
+    "id": "msg_003",
+    "thread_id": "thread_003",
+    "sender": "boss@corp.com",
+    "subject": "URGENT: client escalation",
+    "date": "2026-04-17T08:00:00Z",
+    "snippet": "Need your eyes on the Acme account before EOD.",
+    "body": "Need your eyes on the Acme account before EOD. They're threatening to churn. Call me when you can."
+  },
+  {
+    "id": "msg_004",
+    "thread_id": "thread_004",
+    "sender": "noreply@github.com",
+    "subject": "[ai-email-copilot] PR #14 merged",
+    "date": "2026-04-30T18:00:00Z",
+    "snippet": "Your pull request has been merged.",
+    "body": "Your pull request has been merged into main."
+  }
+]

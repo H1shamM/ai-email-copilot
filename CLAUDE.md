@@ -30,7 +30,11 @@ app/
     bot.py             # Application singleton + lifecycle helpers
     handlers.py        # Command handlers + @authorized_only decorator
     formatting.py      # MarkdownV2 escaping + 4096-char chunking
-tests/unit/            # All tests live here; no integration/e2e dirs yet
+tests/
+  conftest.py          # Shared fixtures: temp_db, sample_emails, authorized_update, mock_anthropic_response
+  unit/                # Default suite — fast, mocked, runs on every PR
+  integration/         # Opt-in real-API suite, marked @pytest.mark.integration
+  fixtures/            # Canonical mock data (sample_emails.json, ...)
 docs/                  # PRD, PROGRESS, GITHUB_WORKFLOW, templates
 .claude/skills/        # Project-specific Claude Code skills (see below)
 .claude/plans/         # Multi-story implementation plans
@@ -60,6 +64,38 @@ Full conventions live in `docs/GITHUB_WORKFLOW.md`. Don't bypass: skipping `Clos
 - **flake8** clean.
 - **Coverage ≥80%** — `pyproject.toml` has `fail_under = 80`. Live-network paths (OAuth, real Gmail/Telegram I/O) are excluded via `# pragma: no cover` and the `omit` list.
 - **No comments on what the code does.** Only add a comment when the *why* is non-obvious (hidden constraint, workaround, surprising invariant).
+
+## Testing
+
+Two suites, separated by marker:
+
+- **Unit tests** (`tests/unit/`) — default. Fast, no network, all external services mocked. Run on every PR via CI. **Coverage gate: ≥80%** (set in `pyproject.toml`).
+- **Integration tests** (`tests/integration/`) — opt-in, marked `@pytest.mark.integration`, hit real Gmail / Claude. Excluded from default `pytest` runs by `addopts = ["-m", "not integration"]`. Each test self-skips when its prerequisites (e.g. `token.pickle`, `ANTHROPIC_API_KEY`) are missing.
+
+```bash
+# Default suite (unit only) — what CI runs
+.venv/Scripts/pytest tests/ --cov=app
+
+# Integration suite (real APIs, costs money on Claude calls)
+.venv/Scripts/pytest -m integration tests/integration/
+
+# Both
+.venv/Scripts/pytest tests/ -m "" --cov=app
+```
+
+### When to write what
+
+- **New module or non-trivial function** → unit tests in `tests/unit/test_<module>.py`. Mock external calls with the patterns documented in "Test Gmail / Claude / Telegram integration" below.
+- **New API boundary** (new external service, new endpoint that crosses one) → add a single integration test that exercises the live path. Mark `@pytest.mark.integration`. Use `pytest.mark.skipif` so it self-skips without credentials.
+- **Bug fixes** → add a unit test that fails before the fix and passes after. Don't add an integration test unless the bug was at an API boundary.
+- **Pure refactors / renames / docs** → no new tests required; existing suite must still pass.
+
+### Shared fixtures (in `tests/conftest.py`)
+
+- `temp_db` (autouse) — fresh tempfile-backed SQLite per test, schema initialized. Already wired everywhere.
+- `sample_emails` — list of canonical mock emails matching `service.parse_email()` shape; loaded from `tests/fixtures/sample_emails.json`.
+- `authorized_update` — `MagicMock` Telegram Update from chat_id=42 with `reply_text` as `AsyncMock`; auth env var pre-set.
+- `mock_anthropic_response(payload: dict)` — factory that returns a stub Anthropic client whose `messages.create` returns `payload` as JSON. Wire with `monkeypatch.setattr("app.ai.analyzer._get_client", lambda: stub)`.
 
 ## Conventions
 
