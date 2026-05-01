@@ -56,7 +56,7 @@
 
 #### Story B: Pull commands — `/unread`, `/analyze`, `/inbox`
 **Branch:** `feature/telegram-pull-commands`
-**Status:** 🔲 Not Started
+**Status:** ✅ Complete (PR #16, 2026-05-01)
 **Size:** M
 **Scope:**
 - `/unread` — fetch + return numbered list with sender/subject/snippet
@@ -105,7 +105,7 @@
 
 By end of week, must demonstrate:
 - [x] Authorized user can `/start` and get a welcome from the bot (Story A)
-- [ ] `/unread` and `/analyze` return formatted email summaries in Telegram (Story B)
+- [x] `/unread` and `/analyze` return formatted email summaries in Telegram (Story B)
 - [ ] `/reply <id>` flow generates 3 drafts and sends via Gmail after approval (Story C)
 - [ ] Bot proactively notifies on priority ≥ 4 emails (Story D)
 - [ ] Coverage stays ≥80%
