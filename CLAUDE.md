@@ -2,6 +2,8 @@
 
 Personal Gmail assistant powered by Claude. FastAPI backend, SQLite store, Telegram as the user interface (the original Flask web UI was dropped — see `docs/PROGRESS.md` Week 3 pivot note).
 
+This project follows professional engineering practices (sprint planning, feature branches, mandatory PR reviews, CI gates, ≥80% coverage). **For the complete workflow, see [`docs/PROFESSIONAL_WORKFLOW.md`](docs/PROFESSIONAL_WORKFLOW.md).** Weekly retros live in [`docs/SPRINT_REPORTS.md`](docs/SPRINT_REPORTS.md).
+
 ## Stack
 
 - **Python 3.11+** (CI matrix runs on this)
@@ -169,10 +171,13 @@ Use these instead of writing freehand `gh` commands.
 
 ## Key reference files
 
+- **`docs/PROFESSIONAL_WORKFLOW.md`** — End-to-end professional workflow: sprint cycle, branch strategy, PR process, CI quality gates, deployment plan.
 - **`docs/PRD.md`** — 7-week product plan and feature specs.
 - **`docs/PROGRESS.md`** — Week-by-week task tracking, current status, engineering decisions log. **Update on every merge.**
+- **`docs/SPRINT_REPORTS.md`** — Weekly retrospective + metrics. **Update at the end of each sprint.**
 - **`docs/GITHUB_WORKFLOW.md`** — Branch / commit / PR conventions in detail.
 - **`docs/USER_STORY_TEMPLATE.md`** / **`docs/BUG_REPORT_TEMPLATE.md`** — Canonical issue bodies.
+- **`.github/PULL_REQUEST_TEMPLATE.md`** — Required PR body checklist.
 - **`pyproject.toml`** — black, pytest, coverage, mypy config (single source of truth for tooling thresholds).
 
 ## Current status (Week 3, in flight)
