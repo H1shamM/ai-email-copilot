@@ -183,13 +183,15 @@ Use these instead of writing freehand `gh` commands.
 - **`.github/PULL_REQUEST_TEMPLATE.md`** — Required PR body checklist.
 - **`pyproject.toml`** — black, pytest, coverage, mypy config (single source of truth for tooling thresholds).
 
-## Current status (Week 3, in flight)
+## Current status (Week 3 complete; Week 4 next)
 
-Week 3 pivoted from web UI to Telegram-only on 2026-04-24. Story breakdown:
+Week 3 pivoted from web UI to Telegram-only on 2026-04-24 and shipped fully on 2026-05-05:
 
 - ✅ Story A — Telegram bot scaffolding + webhook + single-user auth (PR #14, 2026-04-30)
 - ✅ Story B — Pull commands `/unread`, `/analyze`, `/inbox` (PR #16, 2026-05-01)
 - ✅ Story C — Draft reply generation + approve-before-send flow (PR #19, 2026-05-05)
-- 🔄 Story D — Push notifications for high-priority emails (in flight on `feature/telegram-push-notifications`)
+- ✅ Story D — Push notifications for high-priority emails (PR #21, 2026-05-05)
+
+**Week 4 (Calendar integration) is up next — see `docs/PRD.md` Week 4 section and break into stories during sprint planning.**
 
 Detailed plan: `~/.claude/plans/concurrent-napping-crescent.md`.

@@ -6,13 +6,13 @@ Track weekly progress, metrics, and retrospectives.
 
 ## Week 3: Telegram Integration + Draft Replies (Apr 5 – May 5, 2026)
 
-**Status:** In Progress (Stories A–C done, Story D remaining)
+**Status:** ✅ Complete — all four stories shipped, Email Copilot fully driven from Telegram.
 
 ### Planned Tasks (post 2026-04-24 Telegram pivot)
 - [x] Story A: Telegram bot scaffolding + webhook + auth — PR #14
 - [x] Story B: Pull commands `/unread`, `/analyze`, `/inbox` — PR #16
 - [x] Story C: Draft reply generation + approve-before-send flow — PR #19
-- [ ] Story D: Push notifications for high-priority emails
+- [x] Story D: Push notifications for high-priority emails — PR #21
 
 ### Bootstrap shipped during Week 3
 - [x] CI/CD (`tests.yml`, `lint.yml`) — PR #10 (2026-04-23)
@@ -21,31 +21,37 @@ Track weekly progress, metrics, and retrospectives.
 - [x] Professional workflow docs + PR template + sprint reports — `733692d` (2026-05-04)
 
 ### Metrics
-- **PRs Merged:** 5 in Week 3 (#14, #16, #17, #19, plus the bootstrap CI in #10)
-- **Test Coverage:** 91.82% (gate 80%) — up from 94% on a smaller surface; absolute test count grew from 62 → 104.
-- **CI Success Rate:** 100% on every PR submitted
-- **Average PR Size:** ~700 LoC; #19 was the largest at 1,326 LoC because Story C bundled DB + AI + Gmail + Telegram changes — splitting would have been pure churn.
+- **PRs Merged:** 6 in Week 3 (#14, #16, #17, #19, #21, plus bootstrap CI in #10)
+- **Test Coverage:** **91.94%** (gate 80%); test count grew 62 → 131 over the week.
+- **CI Success Rate:** 100% — every PR submitted went green on first push.
+- **Average PR Size:** ~600 LoC; #19 was the outlier at 1,326 LoC (Story C bundled DB + AI + Gmail + Telegram).
+- **Stories per week:** 4 user stories + scaffolding work = full sprint plan delivered on schedule.
 
 ### Completed This Week
-1. Story C — `/reply <id>` flow with 3-tone drafts, inline keyboard (Approve / Edit / Skip / Regenerate), `ConversationHandler`-driven Edit, Gmail send with `In-Reply-To` + `References` threading. Closes #18 in PR #19.
-2. Professional workflow scaffolding — `docs/PROFESSIONAL_WORKFLOW.md`, `docs/SPRINT_REPORTS.md`, `.github/PULL_REQUEST_TEMPLATE.md`. Commit `733692d`.
+1. Story C — `/reply <id>` flow with 3-tone drafts, inline keyboard (Approve / Edit / Skip / Regenerate), `ConversationHandler`-driven Edit, Gmail send with `In-Reply-To` + `References` threading. Closed #18 in PR #19.
+2. Story D — APScheduler-driven background job, `notified_at` idempotency gate, `format_notification` MarkdownV2 block, Generate Reply (reuses Story C) + Mark Done buttons, `/pause` and `/resume` commands. Closed #20 in PR #21.
+3. Professional workflow scaffolding — `docs/PROFESSIONAL_WORKFLOW.md`, `docs/SPRINT_REPORTS.md`, `.github/PULL_REQUEST_TEMPLATE.md`. Commit `733692d`.
 
 ### Challenges
-- `draft_replies` table existed pre-Story C with only `was_sent`. Resolved with a non-destructive `ALTER TABLE` migration in `init_db()` so existing local DBs gain the new `status` column without manual `rm email_assistant.db`.
+- `draft_replies` table existed pre-Story C with only `was_sent`. Resolved with a non-destructive `ALTER TABLE` migration in `init_db()` so existing local DBs gain the new `status` column without manual `rm email_assistant.db`. Same pattern reused for `emails.notified_at` in Story D.
 - Telegram `ConversationHandler` is hard to unit-test as a whole; covered the trivial cancel/timeout callbacks directly and trusted the wiring via integration use.
+- APScheduler's `AsyncIOScheduler.start()` requires a running event loop, which broke the first lifecycle test. Fixed by switching the test to `@pytest.mark.asyncio` so pytest-asyncio's loop is active.
 
 ### Lessons Learned
 **What went well**
-- One feature → one issue → one PR → one merge held cleanly across three stories. Acceptance criteria from issue bodies map 1:1 to PR test scenarios, which cut review thinking.
-- Pre-push trio (`black`, `flake8`, `pytest --cov`) caught every formatting + lint nit before CI; CI has been a confirmation step, not a debug step.
+- One feature → one issue → one PR → one merge held across all four stories. Acceptance criteria from issue bodies mapped 1:1 to PR test scenarios, which cut review thinking to almost zero.
+- Pre-push trio (`black`, `flake8`, `pytest --cov`) caught every formatting + lint nit before CI; CI is a confirmation step, never a debug step.
+- Story D's "Generate Reply" button reused Story C's `reply_command` directly — no duplicated logic. The investment in clean Story C boundaries paid off when Story D needed an entry point.
+- Idempotency-via-DB-column (`notified_at`) is much simpler than tracking state in scheduler memory; survives restarts for free.
 
 **What to improve**
-- Story C is sized L and the PR diff reflects that. Future L stories should still ship as one PR but split into two commits (foundation: DB + helpers; flow: handlers + UI) so reviewers can read incrementally.
-- Black reformatting on first push is noise — add `black` to the pre-commit hook so it runs locally without an explicit invocation.
+- Story C's PR was 1,326 LoC. Future L stories should still ship as one PR but split into two commits (foundation: DB + helpers; flow: handlers + UI) so reviewers can read incrementally.
+- Black reformatting on first push is noise — add `black` to a pre-commit hook so it runs locally without an explicit invocation.
+- The "Generate Reply" callback mutates `update.message = query.message` to delegate to `reply_command`. It works, but a third entry point should trigger a refactor to a `_handle_reply(chat_id, email_id, message)` core.
 
 ### Next Week Preview
-- Story D: push notifications (`apscheduler`, `notified_at` column, "Generate Reply" button reuses Story C flow).
-- Begin Week 4 (Calendar) planning.
+- **Week 4 — External Data + Knowledge:** Calendar API integration, meeting detection in emails, natural-language date parsing, calendar event creation. PRD has the spec; need to break it into 2–3 stories sized like Week 3.
+- Open question: do we add a Telegram `/calendar` command up front, or surface meeting events as auto-detected during the existing analyze flow? Decide during sprint planning.
 
 ---
 

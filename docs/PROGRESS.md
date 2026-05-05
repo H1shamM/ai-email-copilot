@@ -32,7 +32,7 @@
 
 ---
 
-## 🔄 Week 3: Telegram Integration + Draft Replies (Apr 5-11) - IN PROGRESS
+## ✅ Week 3: Telegram Integration + Draft Replies (Apr 5 – May 5) - COMPLETE
 
 **Pivot (2026-04-24):** Original plan was Flask web UI. Replaced with **Telegram-only interface** (webhook into FastAPI, single-user auth, approve-before-send for replies, push notifications for important emails). Detailed plan: `~/.claude/plans/concurrent-napping-crescent.md`.
 
@@ -83,7 +83,7 @@
 
 #### Story D: Push notifications for important emails
 **Branch:** `feature/telegram-push-notifications`
-**Status:** 🔲 Not Started
+**Status:** ✅ Complete (PR #21, 2026-05-05)
 **Size:** M
 **Scope:**
 - Add `apscheduler` dep
@@ -107,11 +107,11 @@ By end of week, must demonstrate:
 - [x] Authorized user can `/start` and get a welcome from the bot (Story A)
 - [x] `/unread` and `/analyze` return formatted email summaries in Telegram (Story B)
 - [x] `/reply <id>` flow generates 3 drafts and sends via Gmail after approval (Story C)
-- [ ] Bot proactively notifies on priority ≥ 4 emails (Story D)
-- [ ] Coverage stays ≥80%
-- [ ] CI green on every PR
+- [x] Bot proactively notifies on priority ≥ 4 emails (Story D)
+- [x] Coverage stays ≥80% (final: 91.94%)
+- [x] CI green on every PR
 
-**Deliverable:** 🎯 Email Copilot fully driven from Telegram
+**Deliverable:** ✅ Email Copilot fully driven from Telegram — shipped 2026-05-05
 
 ---
 
