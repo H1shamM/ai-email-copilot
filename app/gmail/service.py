@@ -1,4 +1,6 @@
 import base64
+from email.mime.text import MIMEText
+
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
@@ -54,6 +56,76 @@ def parse_email(msg_data):
         "snippet": msg_data.get("snippet", ""),
         "body": _get_body(payload),
     }
+
+
+REPLY_HEADERS = ["From", "To", "Subject", "Message-ID", "References", "Reply-To"]
+
+
+def build_reply_mime(
+    to: str,
+    subject: str,
+    body: str,
+    in_reply_to: str | None,
+    references: str | None,
+) -> bytes:
+    """Build a base MIME reply with threading headers.
+
+    `in_reply_to` is the RFC 822 Message-ID of the email being replied to (NOT
+    the Gmail message id). `references` is the original References header, if
+    any — appended to so the new message points back through the chain.
+    """
+    msg = MIMEText(body, _charset="utf-8")
+    msg["To"] = to
+    msg["Subject"] = subject
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+        chain = f"{references} {in_reply_to}".strip() if references else in_reply_to
+        msg["References"] = chain
+    return msg.as_bytes()
+
+
+def make_reply_envelope(original_headers: list, thread_id: str, body: str) -> dict:
+    """Compose the {raw, threadId} envelope Gmail.send expects.
+
+    Pure function so it can be unit-tested without a Gmail service object.
+    """
+    rfc_message_id = _get_header(original_headers, "Message-ID")
+    references = _get_header(original_headers, "References")
+    to_addr = _get_header(original_headers, "Reply-To") or _get_header(original_headers, "From")
+    subject = _get_header(original_headers, "Subject") or ""
+    if subject and not subject.lower().startswith("re:"):
+        subject = f"Re: {subject}"
+
+    if not to_addr:
+        raise ValueError("Original message has no From/Reply-To header — cannot reply")
+
+    mime_bytes = build_reply_mime(
+        to=to_addr,
+        subject=subject,
+        body=body,
+        in_reply_to=rfc_message_id,
+        references=references,
+    )
+    raw = base64.urlsafe_b64encode(mime_bytes).decode("ascii")
+    return {"raw": raw, "threadId": thread_id}
+
+
+def send_reply(thread_id: str, message_id: str, body: str) -> str:  # pragma: no cover
+    """Send a reply that threads under the original message; returns new Gmail id."""
+    service = get_email_service()
+    original = (
+        service.users()
+        .messages()
+        .get(userId="me", id=message_id, format="metadata", metadataHeaders=REPLY_HEADERS)
+        .execute()
+    )
+    envelope = make_reply_envelope(
+        original.get("payload", {}).get("headers", []),
+        thread_id,
+        body,
+    )
+    sent = service.users().messages().send(userId="me", body=envelope).execute()
+    return sent["id"]
 
 
 def get_recent_emails(max_results=50, unread_only=True):  # pragma: no cover

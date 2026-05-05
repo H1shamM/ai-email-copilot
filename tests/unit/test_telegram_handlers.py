@@ -150,6 +150,340 @@ async def test_inbox_replies_empty_when_none_analyzed(monkeypatch, authorized_up
     authorized_update.message.reply_text.assert_awaited_once_with("No analyzed emails yet.")
 
 
+def _analyzed_email_row(row_id: int = 5) -> dict:
+    return {
+        "id": row_id,
+        "gmail_message_id": "gmail-abc",
+        "thread_id": "thread-xyz",
+        "sender": "alice@example.com",
+        "subject": "Lunch?",
+        "body": "Tuesday at 12?",
+        "snippet": "Tuesday",
+        "processed_at": "2026-05-01T10:00:00",
+        "ai_summary": "asks about lunch",
+        "category": "Personal",
+        "urgency_score": 4,
+    }
+
+
+@pytest.fixture
+def reply_context():
+    """Mock context with .args populated, mimicking python-telegram-bot."""
+    ctx = MagicMock()
+    ctx.args = []
+    ctx.user_data = {}
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_reply_command_rejects_missing_arg(monkeypatch, authorized_update, reply_context):
+    await handlers.reply_command(authorized_update, reply_context)
+    text = _all_reply_texts(authorized_update)
+    assert "Usage: /reply" in text
+
+
+@pytest.mark.asyncio
+async def test_reply_command_rejects_unknown_email(monkeypatch, authorized_update, reply_context):
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: None)
+    reply_context.args = ["999"]
+    await handlers.reply_command(authorized_update, reply_context)
+    assert "No email with id 999" in _all_reply_texts(authorized_update)
+
+
+@pytest.mark.asyncio
+async def test_reply_command_rejects_unanalyzed_email(
+    monkeypatch, authorized_update, reply_context
+):
+    row = _analyzed_email_row()
+    row["processed_at"] = None
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: row)
+    reply_context.args = ["5"]
+    await handlers.reply_command(authorized_update, reply_context)
+    assert "hasn't been analyzed" in _all_reply_texts(authorized_update)
+
+
+@pytest.mark.asyncio
+async def test_reply_command_persists_drafts_and_renders(
+    monkeypatch, authorized_update, reply_context
+):
+    row = _analyzed_email_row()
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: row)
+    monkeypatch.setattr(
+        handlers,
+        "generate_replies",
+        lambda email: {"professional": "Pro reply", "friendly": "Hey", "brief": "Yes"},
+    )
+
+    inserted: list[tuple] = []
+
+    def fake_insert(email_id, tone, text):
+        inserted.append((email_id, tone, text))
+        return len(inserted)
+
+    monkeypatch.setattr(handlers.db, "insert_draft_reply", fake_insert)
+    monkeypatch.setattr(
+        handlers.db,
+        "get_draft_by_id",
+        lambda did: {
+            "id": did,
+            "tone": inserted[did - 1][1],
+            "draft_text": inserted[did - 1][2],
+        },
+    )
+    reply_context.args = ["5"]
+    await handlers.reply_command(authorized_update, reply_context)
+
+    assert {t for _, t, _ in inserted} == {"professional", "friendly", "brief"}
+    text = _all_reply_texts(authorized_update)
+    assert "Drafting replies" in text
+    assert "Professional" in text or "🎩" in text
+
+
+@pytest.mark.asyncio
+async def test_reply_command_handles_empty_generation(
+    monkeypatch, authorized_update, reply_context
+):
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: _analyzed_email_row())
+    monkeypatch.setattr(handlers, "generate_replies", lambda _: {})
+    reply_context.args = ["5"]
+    await handlers.reply_command(authorized_update, reply_context)
+    assert "Couldn't draft replies" in _all_reply_texts(authorized_update)
+
+
+def _make_callback_update(data: str, chat_id: int = 42) -> MagicMock:
+    update = MagicMock()
+    update.effective_chat.id = chat_id
+    update.effective_chat.send_message = AsyncMock()
+    update.callback_query.data = data
+    update.callback_query.answer = AsyncMock()
+    update.message = None
+    return update
+
+
+@pytest.mark.asyncio
+async def test_cb_approve_sends_via_gmail_and_marks_sent(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    monkeypatch.setattr(
+        handlers.db,
+        "get_draft_by_id",
+        lambda _: {
+            "id": 7,
+            "email_id": 5,
+            "tone": "brief",
+            "draft_text": "Yes.",
+            "status": "pending",
+        },
+    )
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: _analyzed_email_row())
+
+    sent_calls: list[tuple] = []
+
+    def fake_send(thread_id, message_id, body):
+        sent_calls.append((thread_id, message_id, body))
+        return "new-msg-id"
+
+    monkeypatch.setattr(handlers, "gmail_send_reply", fake_send)
+    update_calls: list[tuple] = []
+    monkeypatch.setattr(
+        handlers.db,
+        "update_draft_status",
+        lambda did, status, **kw: update_calls.append((did, status, kw)),
+    )
+
+    update = _make_callback_update("r:approve:7")
+    await handlers.cb_approve(update, reply_context)
+
+    assert sent_calls == [("thread-xyz", "gmail-abc", "Yes.")]
+    assert update_calls == [(7, "sent", {"mark_sent": True})]
+    update.effective_chat.send_message.assert_awaited()
+    msg = update.effective_chat.send_message.await_args_list[-1].args[0]
+    assert "Reply sent" in msg
+
+
+@pytest.mark.asyncio
+async def test_cb_approve_handles_send_failure(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    monkeypatch.setattr(
+        handlers.db,
+        "get_draft_by_id",
+        lambda _: {"id": 7, "email_id": 5, "tone": "brief", "draft_text": "x", "status": "pending"},
+    )
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: _analyzed_email_row())
+
+    def boom(*_):
+        raise RuntimeError("token expired")
+
+    monkeypatch.setattr(handlers, "gmail_send_reply", boom)
+    update_calls: list[tuple] = []
+    monkeypatch.setattr(
+        handlers.db,
+        "update_draft_status",
+        lambda *a, **k: update_calls.append((a, k)),
+    )
+
+    update = _make_callback_update("r:approve:7")
+    await handlers.cb_approve(update, reply_context)
+
+    assert update_calls == []  # status NOT moved to sent
+    msg = update.effective_chat.send_message.await_args_list[-1].args[0]
+    assert "Send failed" in msg
+
+
+@pytest.mark.asyncio
+async def test_cb_approve_skips_sent_drafts(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    monkeypatch.setattr(
+        handlers.db,
+        "get_draft_by_id",
+        lambda _: {"id": 7, "email_id": 5, "tone": "brief", "draft_text": "x", "status": "sent"},
+    )
+    send_called = False
+
+    def fake_send(*_):
+        nonlocal send_called
+        send_called = True
+
+    monkeypatch.setattr(handlers, "gmail_send_reply", fake_send)
+    update = _make_callback_update("r:approve:7")
+    await handlers.cb_approve(update, reply_context)
+    assert send_called is False
+
+
+@pytest.mark.asyncio
+async def test_cb_skip_marks_all_pending_drafts_skipped(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    drafts = [
+        {"id": 1, "status": "pending"},
+        {"id": 2, "status": "pending"},
+        {"id": 3, "status": "sent"},  # already sent — must NOT be touched
+    ]
+    monkeypatch.setattr(handlers.db, "get_drafts_for_email", lambda _: drafts)
+    skipped: list[int] = []
+    monkeypatch.setattr(
+        handlers.db,
+        "update_draft_status",
+        lambda did, status, **_: skipped.append((did, status)),
+    )
+
+    update = _make_callback_update("r:skip:5")
+    await handlers.cb_skip(update, reply_context)
+
+    assert skipped == [(1, "skipped"), (2, "skipped")]
+    msg = update.effective_chat.send_message.await_args_list[-1].args[0]
+    assert "skipped" in msg
+
+
+@pytest.mark.asyncio
+async def test_cb_regenerate_replaces_only_chosen_tone(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    monkeypatch.setattr(
+        handlers.db,
+        "get_draft_by_id",
+        lambda _: {
+            "id": 9,
+            "email_id": 5,
+            "tone": "brief",
+            "draft_text": "old",
+            "status": "pending",
+        },
+    )
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: _analyzed_email_row())
+    monkeypatch.setattr(handlers, "regenerate_one", lambda email, tone: "fresh take")
+
+    updates: list[tuple] = []
+    monkeypatch.setattr(
+        handlers.db,
+        "update_draft_status",
+        lambda did, status, **kw: updates.append((did, status, kw)),
+    )
+
+    update = _make_callback_update("r:regen:9")
+    await handlers.cb_regenerate(update, reply_context)
+
+    assert updates == [(9, "pending", {"draft_text": "fresh take"})]
+    msg = update.effective_chat.send_message.await_args_list[-1].args[0]
+    assert "brief" in msg
+
+
+@pytest.mark.asyncio
+async def test_cb_regenerate_reports_failure(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    monkeypatch.setattr(
+        handlers.db,
+        "get_draft_by_id",
+        lambda _: {
+            "id": 9,
+            "email_id": 5,
+            "tone": "brief",
+            "draft_text": "old",
+            "status": "pending",
+        },
+    )
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: _analyzed_email_row())
+    monkeypatch.setattr(handlers, "regenerate_one", lambda *_: None)
+    update = _make_callback_update("r:regen:9")
+    await handlers.cb_regenerate(update, reply_context)
+    msg = update.effective_chat.send_message.await_args_list[-1].args[0]
+    assert "Regenerate failed" in msg
+
+
+@pytest.mark.asyncio
+async def test_cb_edit_start_stashes_draft_id(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    monkeypatch.setattr(
+        handlers.db,
+        "get_draft_by_id",
+        lambda _: {"id": 7, "tone": "friendly"},
+    )
+    update = _make_callback_update("r:edit:7")
+    state = await handlers.cb_edit_start(update, reply_context)
+
+    assert reply_context.user_data["editing_draft_id"] == 7
+    assert state == handlers.WAITING_FOR_TEXT
+
+
+@pytest.mark.asyncio
+async def test_cb_edit_save_overwrites_then_sends(monkeypatch, authorized_update, reply_context):
+    reply_context.user_data["editing_draft_id"] = 7
+    authorized_update.message.text = "  My revised draft.  "
+    authorized_update.effective_chat.send_message = AsyncMock()
+
+    monkeypatch.setattr(
+        handlers.db,
+        "get_draft_by_id",
+        lambda _: {
+            "id": 7,
+            "email_id": 5,
+            "tone": "friendly",
+            "draft_text": "My revised draft.",
+            "status": "edited",
+        },
+    )
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: _analyzed_email_row())
+    monkeypatch.setattr(handlers, "gmail_send_reply", lambda *_: "new-id")
+
+    status_calls: list[tuple] = []
+    monkeypatch.setattr(
+        handlers.db,
+        "update_draft_status",
+        lambda did, status, **kw: status_calls.append((did, status, kw)),
+    )
+
+    state = await handlers.cb_edit_save(authorized_update, reply_context)
+
+    assert state == -1
+    # First call: 'edited' with the new text. Second call: 'sent' inside _send_draft.
+    assert status_calls[0] == (7, "edited", {"draft_text": "My revised draft."})
+    assert status_calls[1] == (7, "sent", {"mark_sent": True})
+
+
 @pytest.mark.asyncio
 async def test_unread_drops_unauthorized(monkeypatch):
     """The @authorized_only guard still applies to the new handlers."""
