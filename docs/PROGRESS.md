@@ -68,7 +68,7 @@
 
 #### Story C: Draft reply generation + approve-before-send (subsumes original Task 1)
 **Branch:** `feature/telegram-reply-flow`
-**Status:** 🔲 Not Started
+**Status:** ✅ Complete (PR #19, 2026-05-05)
 **Size:** L
 **Scope:**
 - `app/ai/reply_generator.py` — 3-tone replies (professional / friendly / brief)
@@ -106,7 +106,7 @@
 By end of week, must demonstrate:
 - [x] Authorized user can `/start` and get a welcome from the bot (Story A)
 - [x] `/unread` and `/analyze` return formatted email summaries in Telegram (Story B)
-- [ ] `/reply <id>` flow generates 3 drafts and sends via Gmail after approval (Story C)
+- [x] `/reply <id>` flow generates 3 drafts and sends via Gmail after approval (Story C)
 - [ ] Bot proactively notifies on priority ≥ 4 emails (Story D)
 - [ ] Coverage stays ≥80%
 - [ ] CI green on every PR

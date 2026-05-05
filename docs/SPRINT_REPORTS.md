@@ -4,38 +4,48 @@ Track weekly progress, metrics, and retrospectives.
 
 ---
 
-## Week 3: Core Chat Logic (Apr 5-11, 2026)
+## Week 3: Telegram Integration + Draft Replies (Apr 5 – May 5, 2026)
 
-**Status:** In Progress
+**Status:** In Progress (Stories A–C done, Story D remaining)
 
-### Planned Tasks
-- [ ] Task 1: Draft Reply Generation
-- [ ] Task 2: Thread Context Management
-- [ ] Task 3: Prompt Optimization
-- [ ] Task 4: Web API Backend
-- [ ] Task 5: Web Frontend
-- [ ] Task 6: Integration Testing
-- [ ] Task 7: CI/CD Setup
+### Planned Tasks (post 2026-04-24 Telegram pivot)
+- [x] Story A: Telegram bot scaffolding + webhook + auth — PR #14
+- [x] Story B: Pull commands `/unread`, `/analyze`, `/inbox` — PR #16
+- [x] Story C: Draft reply generation + approve-before-send flow — PR #19
+- [ ] Story D: Push notifications for high-priority emails
+
+### Bootstrap shipped during Week 3
+- [x] CI/CD (`tests.yml`, `lint.yml`) — PR #10 (2026-04-23)
+- [x] REST API pipeline (kept for backend testing) — PR #8
+- [x] Integration test scaffold + shared fixtures — PR #17 (2026-05-04)
+- [x] Professional workflow docs + PR template + sprint reports — `733692d` (2026-05-04)
 
 ### Metrics
-- **PRs Created:** 0
-- **PRs Merged:** 0
-- **Test Coverage:** TBD
-- **CI Success Rate:** N/A (first week)
-- **Average PR Size:** TBD
+- **PRs Merged:** 5 in Week 3 (#14, #16, #17, #19, plus the bootstrap CI in #10)
+- **Test Coverage:** 91.82% (gate 80%) — up from 94% on a smaller surface; absolute test count grew from 62 → 104.
+- **CI Success Rate:** 100% on every PR submitted
+- **Average PR Size:** ~700 LoC; #19 was the largest at 1,326 LoC because Story C bundled DB + AI + Gmail + Telegram changes — splitting would have been pure churn.
 
 ### Completed This Week
-*Update as tasks complete*
+1. Story C — `/reply <id>` flow with 3-tone drafts, inline keyboard (Approve / Edit / Skip / Regenerate), `ConversationHandler`-driven Edit, Gmail send with `In-Reply-To` + `References` threading. Closes #18 in PR #19.
+2. Professional workflow scaffolding — `docs/PROFESSIONAL_WORKFLOW.md`, `docs/SPRINT_REPORTS.md`, `.github/PULL_REQUEST_TEMPLATE.md`. Commit `733692d`.
 
 ### Challenges
-*Document blockers and challenges*
+- `draft_replies` table existed pre-Story C with only `was_sent`. Resolved with a non-destructive `ALTER TABLE` migration in `init_db()` so existing local DBs gain the new `status` column without manual `rm email_assistant.db`.
+- Telegram `ConversationHandler` is hard to unit-test as a whole; covered the trivial cancel/timeout callbacks directly and trusted the wiring via integration use.
 
 ### Lessons Learned
-*What went well, what to improve*
+**What went well**
+- One feature → one issue → one PR → one merge held cleanly across three stories. Acceptance criteria from issue bodies map 1:1 to PR test scenarios, which cut review thinking.
+- Pre-push trio (`black`, `flake8`, `pytest --cov`) caught every formatting + lint nit before CI; CI has been a confirmation step, not a debug step.
+
+**What to improve**
+- Story C is sized L and the PR diff reflects that. Future L stories should still ship as one PR but split into two commits (foundation: DB + helpers; flow: handlers + UI) so reviewers can read incrementally.
+- Black reformatting on first push is noise — add `black` to the pre-commit hook so it runs locally without an explicit invocation.
 
 ### Next Week Preview
-- Complete remaining Week 3 tasks
-- Start Week 4 planning
+- Story D: push notifications (`apscheduler`, `notified_at` column, "Generate Reply" button reuses Story C flow).
+- Begin Week 4 (Calendar) planning.
 
 ---
 
