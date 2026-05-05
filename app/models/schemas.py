@@ -32,5 +32,6 @@ class DraftReply(BaseModel):
     email_id: str
     tone: str  # professional, friendly, brief
     draft_text: str
+    status: str = "pending"  # pending, approved, sent, skipped, edited
     was_sent: bool = False
     sent_at: Optional[datetime] = None

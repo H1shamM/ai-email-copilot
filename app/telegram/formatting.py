@@ -60,6 +60,34 @@ def format_inbox_entry(row: dict, index: int) -> str:
     return f"{emoji} *{index}\\.* {sender} — {subject}\n{summary}"
 
 
+_TONE_LABEL = {
+    "professional": "🎩 Professional",
+    "friendly": "😊 Friendly",
+    "brief": "⚡ Brief",
+}
+
+
+def format_drafts_message(email: dict, drafts: list[dict]) -> str:
+    """Render an email + 3 tone drafts as a single MarkdownV2 message.
+
+    `drafts` is a list of draft_replies rows (must have `tone` and `draft_text`).
+    """
+    sender = escape_markdown_v2(email.get("sender") or "Unknown sender")
+    subject = escape_markdown_v2(email.get("subject") or "(no subject)")
+    header = f"📧 *Drafts for:* {sender}\n*Subject:* {subject}"
+
+    by_tone = {d["tone"]: d for d in drafts}
+    sections: list[str] = [header]
+    for tone in ("professional", "friendly", "brief"):
+        draft = by_tone.get(tone)
+        if not draft:
+            continue
+        label = _TONE_LABEL.get(tone, tone.title())
+        body = escape_markdown_v2(draft.get("draft_text") or "")
+        sections.append(f"\n*{escape_markdown_v2(label)}*\n{body}")
+    return "".join(sections) if len(sections) == 1 else "\n".join(sections)
+
+
 def chunk_messages(blocks: list[str], max_len: int = TELEGRAM_MAX_MESSAGE_LEN) -> list[str]:
     """Pack blocks into messages of at most max_len characters.
 
