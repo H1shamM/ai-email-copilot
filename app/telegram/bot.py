@@ -4,8 +4,17 @@ import os
 
 from telegram import Update
 from telegram.ext import Application
+from telegram.request import HTTPXRequest
 
 _application: Application | None = None
+
+# PTB's default connect_timeout (~5s) is too short on cold-start Windows + httpx,
+# where TLS handshake to api.telegram.org can take 8-15s. Bumping to 30s avoids
+# spurious TimedOut errors on FastAPI startup without affecting steady-state perf.
+_CONNECT_TIMEOUT = 30.0
+_READ_TIMEOUT = 30.0
+_WRITE_TIMEOUT = 30.0
+_POOL_TIMEOUT = 5.0
 
 
 def get_application() -> Application:
@@ -15,7 +24,25 @@ def get_application() -> Application:
         token = os.getenv("TELEGRAM_BOT_TOKEN")
         if not token:
             raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
-        _application = Application.builder().token(token).build()
+        request = HTTPXRequest(
+            connect_timeout=_CONNECT_TIMEOUT,
+            read_timeout=_READ_TIMEOUT,
+            write_timeout=_WRITE_TIMEOUT,
+            pool_timeout=_POOL_TIMEOUT,
+        )
+        get_updates_request = HTTPXRequest(
+            connect_timeout=_CONNECT_TIMEOUT,
+            read_timeout=_READ_TIMEOUT,
+            write_timeout=_WRITE_TIMEOUT,
+            pool_timeout=_POOL_TIMEOUT,
+        )
+        _application = (
+            Application.builder()
+            .token(token)
+            .request(request)
+            .get_updates_request(get_updates_request)
+            .build()
+        )
         from app.telegram import handlers
 
         handlers.register(_application)

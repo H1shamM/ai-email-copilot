@@ -35,8 +35,16 @@ def format_unread_entry(email: dict, index: int) -> str:
     return f"*{index}\\.* {sender}\n*Subject:* {subject}\n{snippet}"
 
 
-def format_analysis_entry(email: dict, analysis: dict, index: int) -> str:
-    """Render one email + Claude analysis result as a numbered MarkdownV2 block."""
+def _id_prefix(row: dict) -> str:
+    """Render `*#<id>*` (MarkdownV2-escaped) so /reply <id> mirrors what's on screen."""
+    row_id = row.get("id")
+    if row_id is None:
+        return "*\\#?*"
+    return f"*\\#{row_id}*"
+
+
+def format_analysis_entry(email: dict, analysis: dict) -> str:
+    """Render one email + Claude analysis result as a MarkdownV2 block keyed by row id."""
     sender = escape_markdown_v2(email.get("sender") or "Unknown sender")
     subject = escape_markdown_v2(email.get("subject") or "(no subject)")
     category = escape_markdown_v2(analysis.get("category") or "Unknown")
@@ -45,19 +53,19 @@ def format_analysis_entry(email: dict, analysis: dict, index: int) -> str:
     summary = escape_markdown_v2(analysis.get("summary") or "")
     emoji = _priority_emoji(urgency)
     return (
-        f"{emoji} *{index}\\.* {sender} — {subject}\n"
+        f"{emoji} {_id_prefix(email)} {sender} — {subject}\n"
         f"*Category:* {category} \\| *Urgency:* {urgency_str}\n"
         f"{summary}"
     )
 
 
-def format_inbox_entry(row: dict, index: int) -> str:
-    """Render one analyzed-email DB row as a numbered MarkdownV2 block."""
+def format_inbox_entry(row: dict) -> str:
+    """Render one analyzed-email DB row as a MarkdownV2 block keyed by its row id."""
     sender = escape_markdown_v2(row.get("sender") or "Unknown sender")
     subject = escape_markdown_v2(row.get("subject") or "(no subject)")
     summary = escape_markdown_v2(row.get("ai_summary") or "")
     emoji = _priority_emoji(row.get("urgency_score"))
-    return f"{emoji} *{index}\\.* {sender} — {subject}\n{summary}"
+    return f"{emoji} {_id_prefix(row)} {sender} — {subject}\n{summary}"
 
 
 _TONE_LABEL = {

@@ -5,7 +5,7 @@ import os
 from functools import wraps
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ParseMode
+from telegram.constants import ChatAction, ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from app.ai.analyzer import analyze_email
@@ -83,6 +83,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(WELCOME)
 
 
+async def _typing(update: Update) -> None:
+    """Show 'Bot is typing…' so the user gets immediate feedback on long ops.
+
+    Telegram auto-clears the indicator after ~5 seconds; for longer commands
+    we also send a placeholder message that gets replaced by the real result.
+    Failures are swallowed — this is purely cosmetic.
+    """
+    try:
+        await update.effective_chat.send_chat_action(ChatAction.TYPING)
+    except Exception:  # noqa: BLE001
+        logger.debug("send_chat_action failed; continuing without typing indicator")
+
+
 async def _send_chunks(update: Update, blocks: list[str], empty_message: str) -> None:
     """Render blocks via chunk_messages and send each as MarkdownV2."""
     if not blocks:
@@ -95,6 +108,7 @@ async def _send_chunks(update: Update, blocks: list[str], empty_message: str) ->
 @authorized_only
 async def unread(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Fetch unread emails from Gmail and reply with a numbered list."""
+    await _typing(update)
     try:
         emails = gmail_fetch_recent(max_results=UNREAD_DEFAULT_LIMIT, unread_only=True)
     except RuntimeError as exc:
@@ -108,28 +122,44 @@ async def unread(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @authorized_only
 async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Run Claude on every unprocessed email in the DB and reply with results."""
+    await _typing(update)
     pending = db.get_unprocessed_emails()
+    if not pending:
+        await update.message.reply_text("No emails to analyze.")
+        return
+
+    await update.message.reply_text(
+        f"🔎 Analyzing {len(pending)} email{'s' if len(pending) != 1 else ''}… "
+        f"this can take ~{max(2, len(pending) * 3)}s."
+    )
+
     blocks: list[str] = []
-    for index, email in enumerate(pending, start=1):
+    for email in pending:
+        await _typing(update)
         analysis = analyze_email(email)
         if not analysis:
             blocks.append(
-                f"⚠️ *{index}\\.* {escape_markdown_v2(email.get('sender') or 'Unknown')} "
-                f"— analysis failed"
+                f"⚠️ *\\#{email.get('id', '?')}* "
+                f"{escape_markdown_v2(email.get('sender') or 'Unknown')} — analysis failed"
             )
             continue
         db.update_analysis(email["gmail_message_id"], analysis)
-        blocks.append(format_analysis_entry(email, analysis, index))
+        blocks.append(format_analysis_entry(email, analysis))
 
+    if blocks:
+        blocks.append("_Tip:_ use `/reply <id>` with one of the `#` numbers above\\.")
     await _send_chunks(update, blocks, "No emails to analyze.")
 
 
 @authorized_only
 async def inbox(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show the most recent analyzed emails from the DB with priority indicators."""
+    await _typing(update)
     rows = db.get_recent_emails(limit=INBOX_DEFAULT_LIMIT)
     analyzed = [row for row in rows if row.get("processed_at")]
-    blocks = [format_inbox_entry(row, i + 1) for i, row in enumerate(analyzed)]
+    blocks = [format_inbox_entry(row) for row in analyzed]
+    if blocks:
+        blocks.append("_Tip:_ use `/reply <id>` with one of the `#` numbers above\\.")
     await _send_chunks(update, blocks, "No analyzed emails yet.")
 
 
@@ -159,29 +189,29 @@ def _build_reply_keyboard(drafts: list[dict], email_id: int) -> InlineKeyboardMa
     return InlineKeyboardMarkup(rows)
 
 
-@authorized_only
-async def reply_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """`/reply <email_id>` — generate 3 drafts and post them with action buttons."""
-    args = context.args or []
-    if not args or not args[0].isdigit():
-        await update.message.reply_text("Usage: /reply <email_id>")
-        return
-    email_id = int(args[0])
+async def _run_reply_flow(update: Update, email_id: int) -> None:
+    """Generate 3 drafts for email_id, persist, and post with action keyboard.
+
+    Uses `effective_chat.send_message` so it works identically from `/reply <id>`
+    and from the notification's "Generate Reply" button (PTB freezes Update
+    objects after deserialization, so mutating `update.message` is unsafe).
+    """
+    chat = update.effective_chat
 
     email = db.get_email_by_row_id(email_id)
     if not email:
-        await update.message.reply_text(f"No email with id {email_id}.")
+        await chat.send_message(f"No email with id {email_id}.")
         return
     if not email.get("processed_at"):
-        await update.message.reply_text(
-            f"Email {email_id} hasn't been analyzed yet — run /analyze first."
-        )
+        await chat.send_message(f"Email {email_id} hasn't been analyzed yet — run /analyze first.")
         return
 
-    await update.message.reply_text("Drafting replies… this can take a few seconds.")
+    await _typing(update)
+    await chat.send_message("✍️ Drafting 3 replies… ~10s.")
+    await _typing(update)
     replies = generate_replies(email)
     if not replies:
-        await update.message.reply_text("Couldn't draft replies — try again in a moment.")
+        await chat.send_message("Couldn't draft replies — try again in a moment.")
         return
 
     drafts: list[dict] = []
@@ -192,11 +222,28 @@ async def reply_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     body = format_drafts_message(email, drafts)
     keyboard = _build_reply_keyboard(drafts, email_id)
     for chunk in chunk_messages([body]):
-        await update.message.reply_text(
-            chunk,
-            parse_mode=ParseMode.MARKDOWN_V2,
-            reply_markup=keyboard,
-        )
+        try:
+            await chat.send_message(
+                chunk,
+                parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=keyboard,
+            )
+        except Exception:  # noqa: BLE001
+            # MarkdownV2 escaping is fiddly; fall back to plain text so the
+            # user always sees the drafts even if a stray reserved char slips
+            # through escape_markdown_v2.
+            logger.exception("MarkdownV2 send failed; falling back to plain text")
+            await chat.send_message(chunk, reply_markup=keyboard)
+
+
+@authorized_only
+async def reply_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """`/reply <email_id>` — parse args, then run the shared draft flow."""
+    args = context.args or []
+    if not args or not args[0].isdigit():
+        await update.effective_chat.send_message("Usage: /reply <email_id>")
+        return
+    await _run_reply_flow(update, int(args[0]))
 
 
 def _parse_callback(data: str, prefix: str = "r") -> tuple[str, int] | None:
@@ -211,11 +258,12 @@ def _parse_callback(data: str, prefix: str = "r") -> tuple[str, int] | None:
 async def cb_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """User tapped Approve — send via Gmail and mark draft sent."""
     query = update.callback_query
-    await query.answer()
+    await query.answer("Sending…")
     parsed = _parse_callback(query.data or "")
     if parsed is None or parsed[0] != "approve":
         return
     _, draft_id = parsed
+    await _typing(update)
     await _send_draft(update, context, draft_id, source="approve")
 
 
@@ -280,6 +328,8 @@ async def cb_edit_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         await update.message.reply_text("Empty message — edit cancelled.")
         return -1
     db.update_draft_status(draft_id, "edited", draft_text=new_text)
+    await _typing(update)
+    await update.message.reply_text("✍️ Sending edited reply…")
     await _send_draft(update, context, draft_id, source="edit")
     return -1
 
@@ -288,7 +338,7 @@ async def cb_edit_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 async def cb_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Skip All — mark every draft for this email as skipped, no Gmail call."""
     query = update.callback_query
-    await query.answer()
+    await query.answer("Skipped")
     parsed = _parse_callback(query.data or "")
     if parsed is None or parsed[0] != "skip":
         return
@@ -304,7 +354,7 @@ async def cb_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cb_regenerate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Regenerate one tone — replace draft_text in place; leave others untouched."""
     query = update.callback_query
-    await query.answer()
+    await query.answer("Regenerating…")
     parsed = _parse_callback(query.data or "")
     if parsed is None or parsed[0] != "regen":
         return
@@ -318,6 +368,7 @@ async def cb_regenerate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.effective_chat.send_message("Original email not found.")
         return
 
+    await _typing(update)
     new_text = regenerate_one(email, draft["tone"])
     if not new_text:
         await update.effective_chat.send_message(f"Regenerate failed for {draft['tone']}.")
@@ -330,25 +381,21 @@ async def cb_regenerate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 @authorized_only
 async def cb_notify_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Notification → ✍ Generate Reply: delegate to the Story C /reply flow."""
+    """Notification → ✍ Generate Reply: run the shared draft flow."""
     query = update.callback_query
-    await query.answer()
+    await query.answer("Drafting…")
     parsed = _parse_callback(query.data or "", prefix="n")
     if parsed is None or parsed[0] != "reply":
         return
     _, email_row_id = parsed
-    context.args = [str(email_row_id)]
-    # reply_command reads update.message.reply_text — for callbacks we route
-    # through update.effective_chat instead by patching message onto the update.
-    update.message = query.message
-    await reply_command(update, context)
+    await _run_reply_flow(update, email_row_id)
 
 
 @authorized_only
 async def cb_notify_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Notification → ✅ Mark Done: archive+read in DB and edit the message."""
     query = update.callback_query
-    await query.answer()
+    await query.answer("Done")
     parsed = _parse_callback(query.data or "", prefix="n")
     if parsed is None or parsed[0] != "done":
         return

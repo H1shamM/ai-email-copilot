@@ -50,47 +50,56 @@ def test_format_unread_entry_handles_missing_fields():
 
 
 def test_format_analysis_entry_high_urgency_gets_red():
-    email = {"sender": "boss@corp.com", "subject": "URGENT"}
+    email = {"id": 5, "sender": "boss@corp.com", "subject": "URGENT"}
     analysis = {"category": "Work", "urgency_score": 10, "summary": "Reply ASAP"}
-    block = format_analysis_entry(email, analysis, 1)
+    block = format_analysis_entry(email, analysis)
     assert block.startswith("🔴")
+    assert "*\\#5*" in block  # row id is what /reply takes
     assert "*Category:* Work" in block
     assert "10/10" in block
     assert "Reply ASAP" in block
 
 
 def test_format_analysis_entry_medium_urgency_gets_yellow():
-    block = format_analysis_entry({"sender": "x"}, {"urgency_score": 6}, 1)
+    block = format_analysis_entry({"id": 1, "sender": "x"}, {"urgency_score": 6})
     assert block.startswith("🟡")
 
 
 def test_format_analysis_entry_low_urgency_gets_green():
-    block = format_analysis_entry({"sender": "x"}, {"urgency_score": 2}, 1)
+    block = format_analysis_entry({"id": 1, "sender": "x"}, {"urgency_score": 2})
     assert block.startswith("🟢")
 
 
 def test_format_analysis_entry_missing_urgency_shows_na():
-    block = format_analysis_entry({"sender": "x"}, {"category": "Other"}, 1)
+    block = format_analysis_entry({"id": 1, "sender": "x"}, {"category": "Other"})
     assert block.startswith("⚪")
     assert "n/a" in block
 
 
+def test_format_analysis_entry_missing_id_falls_back():
+    """Defensive: dict without id should render '#?' rather than crash."""
+    block = format_analysis_entry({"sender": "x"}, {"urgency_score": 3})
+    assert "*\\#?*" in block
+
+
 def test_format_inbox_entry_happy_path():
     row = {
+        "id": 12,
         "sender": "alice@example.com",
         "subject": "Update",
         "ai_summary": "All good.",
         "urgency_score": 9,
     }
-    block = format_inbox_entry(row, 1)
+    block = format_inbox_entry(row)
     assert block.startswith("🔴")
+    assert "*\\#12*" in block
     assert "alice@example\\.com" in block
     assert "Update" in block
     assert "All good\\." in block
 
 
 def test_format_inbox_entry_handles_missing_analysis():
-    block = format_inbox_entry({"sender": "x", "subject": "y"}, 1)
+    block = format_inbox_entry({"id": 7, "sender": "x", "subject": "y"})
     assert block.startswith("⚪")
 
 
