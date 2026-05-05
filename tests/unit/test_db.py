@@ -1,5 +1,10 @@
 """Smoke tests for the database module."""
 
+import importlib
+import os
+import sqlite3
+import tempfile
+
 import pytest
 
 from app.database import db
@@ -196,6 +201,65 @@ def test_get_email_by_row_id_round_trips():
     found = db.get_email_by_row_id(rid)
     assert found["gmail_message_id"] == "d_lookup"
     assert db.get_email_by_row_id(99999) is None
+
+
+def test_init_db_migrates_pre_story_c_schema(monkeypatch):
+    """A DB created before Story C/D (no draft_replies.status, no emails.notified_at)
+    must migrate cleanly when init_db runs again — no 'no such column' error from
+    indexes referencing the new columns.
+    """
+    fd, legacy_path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        legacy = sqlite3.connect(legacy_path)
+        legacy.executescript("""
+            CREATE TABLE emails (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                gmail_message_id TEXT UNIQUE NOT NULL,
+                thread_id TEXT,
+                sender TEXT NOT NULL,
+                subject TEXT,
+                body TEXT,
+                snippet TEXT,
+                received_date TEXT,
+                ai_summary TEXT,
+                category TEXT,
+                sentiment TEXT,
+                action_required TEXT,
+                urgency_score INTEGER,
+                is_read INTEGER DEFAULT 0,
+                is_archived INTEGER DEFAULT 0,
+                is_starred INTEGER DEFAULT 0,
+                processed_at TEXT,
+                created_at TEXT
+            );
+            CREATE TABLE draft_replies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email_id INTEGER NOT NULL,
+                tone TEXT NOT NULL,
+                draft_text TEXT NOT NULL,
+                was_sent INTEGER DEFAULT 0,
+                sent_at TEXT,
+                created_at TEXT
+            );
+            """)
+        legacy.commit()
+        legacy.close()
+
+        monkeypatch.setenv("DATABASE_PATH", legacy_path)
+        reloaded = importlib.reload(db)
+        reloaded.init_db()  # must not raise
+
+        check = reloaded.get_connection()
+        try:
+            cols_emails = {r["name"] for r in check.execute("PRAGMA table_info(emails)")}
+            cols_drafts = {r["name"] for r in check.execute("PRAGMA table_info(draft_replies)")}
+        finally:
+            check.close()
+        assert "notified_at" in cols_emails
+        assert "status" in cols_drafts
+    finally:
+        os.unlink(legacy_path)
 
 
 def test_get_or_create_telegram_user_creates_on_first_call():

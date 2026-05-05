@@ -13,8 +13,10 @@ def get_connection():
 
 
 def init_db():
-    """Create all tables if they don't exist."""
+    """Create tables, run column migrations, then create indexes that depend on them."""
     conn = get_connection()
+    # Tables only — indexes that reference migrated columns must run AFTER the
+    # backfill below, otherwise SQLite raises "no such column" on a pre-Story-C DB.
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS emails (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,10 +46,6 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now'))
         );
 
-        CREATE INDEX IF NOT EXISTS idx_gmail_id ON emails(gmail_message_id);
-        CREATE INDEX IF NOT EXISTS idx_category ON emails(category);
-        CREATE INDEX IF NOT EXISTS idx_received_date ON emails(received_date);
-
         CREATE TABLE IF NOT EXISTS draft_replies (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             email_id INTEGER NOT NULL,
@@ -59,9 +57,6 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (email_id) REFERENCES emails(id)
         );
-
-        CREATE INDEX IF NOT EXISTS idx_draft_email_id ON draft_replies(email_id);
-        CREATE INDEX IF NOT EXISTS idx_draft_status ON draft_replies(status);
 
         CREATE TABLE IF NOT EXISTS calendar_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,8 +97,8 @@ def init_db():
     """)
 
     # Backfill the draft_replies.status column for DBs created before Story C.
-    existing_cols = {r["name"] for r in conn.execute("PRAGMA table_info(draft_replies)").fetchall()}
-    if "status" not in existing_cols:
+    draft_cols = {r["name"] for r in conn.execute("PRAGMA table_info(draft_replies)").fetchall()}
+    if "status" not in draft_cols:
         conn.execute("ALTER TABLE draft_replies ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'")
         conn.commit()
 
@@ -113,6 +108,14 @@ def init_db():
         conn.execute("ALTER TABLE emails ADD COLUMN notified_at TEXT")
         conn.commit()
 
+    # Indexes — safe now that every referenced column exists.
+    conn.executescript("""
+        CREATE INDEX IF NOT EXISTS idx_gmail_id ON emails(gmail_message_id);
+        CREATE INDEX IF NOT EXISTS idx_category ON emails(category);
+        CREATE INDEX IF NOT EXISTS idx_received_date ON emails(received_date);
+        CREATE INDEX IF NOT EXISTS idx_draft_email_id ON draft_replies(email_id);
+        CREATE INDEX IF NOT EXISTS idx_draft_status ON draft_replies(status);
+    """)
     conn.close()
 
 
