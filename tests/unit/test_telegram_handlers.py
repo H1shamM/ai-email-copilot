@@ -485,6 +485,106 @@ async def test_cb_edit_save_overwrites_then_sends(monkeypatch, authorized_update
 
 
 @pytest.mark.asyncio
+async def test_pause_command_calls_push_pause_and_replies(monkeypatch, authorized_update):
+    pause_calls = {"n": 0}
+
+    def fake_pause():
+        pause_calls["n"] += 1
+        return True
+
+    monkeypatch.setattr(handlers.telegram_push, "pause", fake_pause)
+    await handlers.pause_command(authorized_update, None)
+    assert pause_calls["n"] == 1
+    text = _all_reply_texts(authorized_update)
+    assert "paused" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_pause_command_idempotent_when_already_paused(monkeypatch, authorized_update):
+    monkeypatch.setattr(handlers.telegram_push, "pause", lambda: False)
+    await handlers.pause_command(authorized_update, None)
+    text = _all_reply_texts(authorized_update)
+    assert "paused" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_resume_command_calls_push_resume_and_replies(monkeypatch, authorized_update):
+    resume_calls = {"n": 0}
+
+    def fake_resume():
+        resume_calls["n"] += 1
+        return True
+
+    monkeypatch.setattr(handlers.telegram_push, "resume", fake_resume)
+    await handlers.resume_command(authorized_update, None)
+    assert resume_calls["n"] == 1
+    text = _all_reply_texts(authorized_update)
+    assert "resumed" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_cb_notify_done_marks_archived_and_edits_message(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+
+    done_calls: list[int] = []
+    monkeypatch.setattr(handlers.db, "mark_email_done", lambda rid: done_calls.append(rid))
+
+    update = _make_callback_update("n:done:5")
+    update.callback_query.edit_message_text = AsyncMock()
+    await handlers.cb_notify_done(update, reply_context)
+
+    assert done_calls == [5]
+    update.callback_query.edit_message_text.assert_awaited_once_with("✅ Done.")
+
+
+@pytest.mark.asyncio
+async def test_cb_notify_done_falls_back_when_edit_fails(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    monkeypatch.setattr(handlers.db, "mark_email_done", lambda _: None)
+
+    update = _make_callback_update("n:done:5")
+    update.callback_query.edit_message_text = AsyncMock(side_effect=RuntimeError("can't edit"))
+    await handlers.cb_notify_done(update, reply_context)
+
+    update.effective_chat.send_message.assert_awaited()
+    msg = update.effective_chat.send_message.await_args_list[-1].args[0]
+    assert "Done" in msg
+
+
+@pytest.mark.asyncio
+async def test_cb_notify_reply_delegates_to_reply_command(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+
+    captured: dict = {}
+
+    async def fake_reply(update, context):
+        captured["args"] = list(context.args)
+        captured["chat_id"] = update.effective_chat.id
+
+    monkeypatch.setattr(handlers, "reply_command", fake_reply)
+
+    update = _make_callback_update("n:reply:7")
+    await handlers.cb_notify_reply(update, reply_context)
+
+    assert captured == {"args": ["7"], "chat_id": 42}
+
+
+@pytest.mark.asyncio
+async def test_cb_notify_done_ignores_malformed_callback(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    done_calls: list[int] = []
+    monkeypatch.setattr(handlers.db, "mark_email_done", lambda rid: done_calls.append(rid))
+
+    update = _make_callback_update("n:wrong:5")  # action != 'done'
+    await handlers.cb_notify_done(update, reply_context)
+    assert done_calls == []
+
+
+@pytest.mark.asyncio
 async def test_unread_drops_unauthorized(monkeypatch):
     """The @authorized_only guard still applies to the new handlers."""
     monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")

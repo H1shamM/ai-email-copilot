@@ -11,6 +11,7 @@ from app.gmail.service import get_recent_emails  # noqa: E402
 from app.ai.analyzer import analyze_email  # noqa: E402
 from app.database import db  # noqa: E402
 from app.telegram import bot as telegram_bot  # noqa: E402
+from app.telegram import push as telegram_push  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +33,15 @@ async def startup():
     await application.bot.set_webhook(url=webhook_url, secret_token=secret_token)
     logger.info("Telegram webhook registered at %s", webhook_url)
 
+    if telegram_push.is_enabled_at_boot():
+        interval = int(os.getenv("TELEGRAM_PUSH_INTERVAL_MINUTES", "5"))
+        threshold = int(os.getenv("TELEGRAM_PUSH_THRESHOLD", "4"))
+        telegram_push.start(application, interval_minutes=interval, threshold=threshold)
+
 
 @app.on_event("shutdown")
 async def shutdown():
+    telegram_push.stop()
     await telegram_bot.shutdown()
 
 

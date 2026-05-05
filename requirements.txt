@@ -9,3 +9,4 @@ pydantic
 python-dateutil
 httpx
 python-telegram-bot>=21.0
+apscheduler>=3.10
