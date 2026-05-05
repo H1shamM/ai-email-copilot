@@ -88,6 +88,24 @@ def format_drafts_message(email: dict, drafts: list[dict]) -> str:
     return "".join(sections) if len(sections) == 1 else "\n".join(sections)
 
 
+def format_notification(row: dict) -> str:
+    """MarkdownV2 push-notification block: sender, subject, category, urgency, summary."""
+    sender = escape_markdown_v2(row.get("sender") or "Unknown sender")
+    subject = escape_markdown_v2(row.get("subject") or "(no subject)")
+    category = escape_markdown_v2(row.get("category") or "Unknown")
+    urgency = row.get("urgency_score")
+    urgency_str = escape_markdown_v2(f"{urgency}/10" if urgency is not None else "n/a")
+    summary = escape_markdown_v2(row.get("ai_summary") or "")
+    emoji = _priority_emoji(urgency)
+    return (
+        f"{emoji} *Priority email*\n"
+        f"*From:* {sender}\n"
+        f"*Subject:* {subject}\n"
+        f"*Category:* {category} \\| *Urgency:* {urgency_str}\n"
+        f"{summary}"
+    )
+
+
 def chunk_messages(blocks: list[str], max_len: int = TELEGRAM_MAX_MESSAGE_LEN) -> list[str]:
     """Pack blocks into messages of at most max_len characters.
 

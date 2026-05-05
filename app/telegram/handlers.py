@@ -13,6 +13,7 @@ from app.ai.reply_generator import generate_replies, regenerate_one
 from app.database import db
 from app.gmail.service import get_recent_emails as gmail_fetch_recent
 from app.gmail.service import send_reply as gmail_send_reply
+from app.telegram import push as telegram_push
 from app.telegram.conversations import WAITING_FOR_TEXT, build_edit_handler
 from app.telegram.formatting import (
     chunk_messages,
@@ -35,6 +36,8 @@ WELCOME = (
     "/analyze - run AI analysis on unprocessed emails\n"
     "/inbox - show last analyzed emails\n"
     "/reply <id> - draft a reply to an email\n"
+    "/pause - stop push notifications\n"
+    "/resume - start push notifications\n"
     "/help - show this message"
 )
 
@@ -196,10 +199,10 @@ async def reply_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
 
 
-def _parse_callback(data: str) -> tuple[str, int] | None:
-    """Parse `r:<action>:<id>` callback data; return (action, id) or None."""
+def _parse_callback(data: str, prefix: str = "r") -> tuple[str, int] | None:
+    """Parse `<prefix>:<action>:<id>` callback data; return (action, id) or None."""
     parts = data.split(":")
-    if len(parts) != 3 or parts[0] != "r" or not parts[2].isdigit():
+    if len(parts) != 3 or parts[0] != prefix or not parts[2].isdigit():
         return None
     return parts[1], int(parts[2])
 
@@ -325,6 +328,53 @@ async def cb_regenerate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
+@authorized_only
+async def cb_notify_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Notification → ✍ Generate Reply: delegate to the Story C /reply flow."""
+    query = update.callback_query
+    await query.answer()
+    parsed = _parse_callback(query.data or "", prefix="n")
+    if parsed is None or parsed[0] != "reply":
+        return
+    _, email_row_id = parsed
+    context.args = [str(email_row_id)]
+    # reply_command reads update.message.reply_text — for callbacks we route
+    # through update.effective_chat instead by patching message onto the update.
+    update.message = query.message
+    await reply_command(update, context)
+
+
+@authorized_only
+async def cb_notify_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Notification → ✅ Mark Done: archive+read in DB and edit the message."""
+    query = update.callback_query
+    await query.answer()
+    parsed = _parse_callback(query.data or "", prefix="n")
+    if parsed is None or parsed[0] != "done":
+        return
+    _, email_row_id = parsed
+    db.mark_email_done(email_row_id)
+    try:
+        await query.edit_message_text("✅ Done.")
+    except Exception:  # noqa: BLE001 — non-fatal if message can't be edited
+        logger.exception("Failed to edit notification message for email=%s", email_row_id)
+        await update.effective_chat.send_message("✅ Done.")
+
+
+@authorized_only
+async def pause_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Stop the push scheduler."""
+    telegram_push.pause()
+    await update.message.reply_text("🔕 Notifications paused.")
+
+
+@authorized_only
+async def resume_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Resume the push scheduler (or start it if it wasn't running)."""
+    telegram_push.resume()
+    await update.message.reply_text("🔔 Notifications resumed.")
+
+
 def register(application: Application) -> None:
     """Register all command handlers on the given Application."""
     application.add_handler(CommandHandler("start", start))
@@ -333,6 +383,8 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("analyze", analyze))
     application.add_handler(CommandHandler("inbox", inbox))
     application.add_handler(CommandHandler("reply", reply_command))
+    application.add_handler(CommandHandler("pause", pause_command))
+    application.add_handler(CommandHandler("resume", resume_command))
 
     # Edit conversation must be registered before the bare CallbackQueryHandlers,
     # otherwise the entry-point pattern is shadowed.
@@ -340,3 +392,5 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(cb_approve, pattern=r"^r:approve:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_skip, pattern=r"^r:skip:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_regenerate, pattern=r"^r:regen:\d+$"))
+    application.add_handler(CallbackQueryHandler(cb_notify_reply, pattern=r"^n:reply:\d+$"))
+    application.add_handler(CallbackQueryHandler(cb_notify_done, pattern=r"^n:done:\d+$"))

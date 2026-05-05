@@ -155,6 +155,9 @@ Listed in `.env.example`. Don't commit real values.
 | `TELEGRAM_AUTHORIZED_CHAT_ID` | Your chat ID from @userinfobot |
 | `TELEGRAM_WEBHOOK_URL` | Public HTTPS URL Telegram POSTs to (use cloudflared/ngrok in dev) |
 | `TELEGRAM_WEBHOOK_SECRET` | Random string shared with Telegram for request authentication |
+| `TELEGRAM_PUSH_ENABLED` | `true`/`false` — auto-start the push scheduler on app startup (default `true`) |
+| `TELEGRAM_PUSH_INTERVAL_MINUTES` | Scheduler tick interval, minimum 1 (default `5`) |
+| `TELEGRAM_PUSH_THRESHOLD` | Notify only when `urgency_score >= N` (default `4`) |
 
 `token.pickle` (Gmail OAuth) is generated on first auth and refreshed automatically. If `invalid_grant` errors appear, the refresh token has been revoked (Google revokes tokens for "Testing" apps after ~7 days of inactivity) — delete `token.pickle` and re-run `python -c "from app.gmail.auth import get_credentials; get_credentials()"` to re-auth.
 
@@ -186,7 +189,7 @@ Week 3 pivoted from web UI to Telegram-only on 2026-04-24. Story breakdown:
 
 - ✅ Story A — Telegram bot scaffolding + webhook + single-user auth (PR #14, 2026-04-30)
 - ✅ Story B — Pull commands `/unread`, `/analyze`, `/inbox` (PR #16, 2026-05-01)
-- 🔲 Story C — Draft reply generation + approve-before-send flow
-- 🔲 Story D — Push notifications for high-priority emails
+- ✅ Story C — Draft reply generation + approve-before-send flow (PR #19, 2026-05-05)
+- 🔄 Story D — Push notifications for high-priority emails (in flight on `feature/telegram-push-notifications`)
 
 Detailed plan: `~/.claude/plans/concurrent-napping-crescent.md`.

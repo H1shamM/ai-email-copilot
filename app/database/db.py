@@ -40,6 +40,7 @@ def init_db():
 
             -- Metadata
             processed_at TEXT,
+            notified_at TEXT,
             created_at TEXT DEFAULT (datetime('now'))
         );
 
@@ -104,6 +105,12 @@ def init_db():
     existing_cols = {r["name"] for r in conn.execute("PRAGMA table_info(draft_replies)").fetchall()}
     if "status" not in existing_cols:
         conn.execute("ALTER TABLE draft_replies ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'")
+        conn.commit()
+
+    # Backfill emails.notified_at for DBs created before Story D.
+    email_cols = {r["name"] for r in conn.execute("PRAGMA table_info(emails)").fetchall()}
+    if "notified_at" not in email_cols:
+        conn.execute("ALTER TABLE emails ADD COLUMN notified_at TEXT")
         conn.commit()
 
     conn.close()
@@ -196,6 +203,50 @@ def get_unprocessed_emails() -> list[dict]:
     try:
         rows = conn.execute("SELECT * FROM emails WHERE processed_at IS NULL").fetchall()
         return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_high_priority_unnotified(threshold: int) -> list[dict]:
+    """Analyzed emails with urgency >= threshold that haven't been notified yet."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT * FROM emails
+               WHERE processed_at IS NOT NULL
+                 AND notified_at IS NULL
+                 AND urgency_score IS NOT NULL
+                 AND urgency_score >= ?
+               ORDER BY urgency_score DESC, received_date DESC""",
+            (threshold,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def mark_email_notified(gmail_message_id: str) -> None:
+    """Stamp notified_at on an email so the push job won't notify again."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE emails SET notified_at = ? WHERE gmail_message_id = ?",
+            (datetime.now().isoformat(), gmail_message_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def mark_email_done(email_row_id: int) -> None:
+    """Mark an email archived + read (used by the Mark Done button on a notification)."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE emails SET is_archived = 1, is_read = 1 WHERE id = ?",
+            (email_row_id,),
+        )
+        conn.commit()
     finally:
         conn.close()
 

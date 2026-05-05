@@ -5,6 +5,7 @@ from app.telegram.formatting import (
     escape_markdown_v2,
     format_analysis_entry,
     format_inbox_entry,
+    format_notification,
     format_unread_entry,
 )
 
@@ -126,3 +127,29 @@ def test_chunk_messages_never_splits_mid_block():
     big_block = "y" * 5000
     result = chunk_messages([big_block], max_len=4096)
     assert result == [big_block]
+
+
+def test_format_notification_includes_all_fields():
+    row = {
+        "sender": "alice@example.com",
+        "subject": "Server down!",
+        "category": "Work",
+        "urgency_score": 9,
+        "ai_summary": "Production database is unreachable.",
+    }
+    out = format_notification(row)
+    assert "🔴" in out
+    assert "Priority email" in out
+    assert "alice@example\\.com" in out
+    assert "Server down\\!" in out
+    assert "Work" in out
+    assert "9/10" in out
+    assert "Production database is unreachable\\." in out
+
+
+def test_format_notification_handles_missing_fields():
+    out = format_notification({})
+    assert "Unknown sender" in out
+    assert "\\(no subject\\)" in out  # parens are MarkdownV2-reserved
+    assert "n/a" in out
+    assert "⚪" in out  # urgency=None → grey emoji
