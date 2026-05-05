@@ -48,6 +48,8 @@ def authorized_update(monkeypatch):
     monkeypatch.setattr(db, "get_or_create_telegram_user", lambda _: {})
     update = MagicMock()
     update.effective_chat.id = 42
+    update.effective_chat.send_chat_action = AsyncMock()
+    update.effective_chat.send_message = AsyncMock()
     update.message.reply_text = AsyncMock()
     return update
 

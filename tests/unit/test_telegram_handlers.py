@@ -9,18 +9,29 @@ from app.telegram import handlers
 
 @pytest.fixture
 def authorized_update(monkeypatch):
-    """Authorized Update with an AsyncMock-backed reply_text and DB upsert stubbed."""
+    """Authorized Update with AsyncMock-backed reply_text + send_chat_action."""
     monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
     monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
     update = MagicMock()
     update.effective_chat.id = 42
+    update.effective_chat.send_chat_action = AsyncMock()
+    update.effective_chat.send_message = AsyncMock()
     update.message.reply_text = AsyncMock()
     return update
 
 
 def _all_reply_texts(update) -> str:
-    """Concatenate every text passed to reply_text across all calls."""
-    return "\n".join(call.args[0] for call in update.message.reply_text.await_args_list)
+    """Concatenate every text passed to reply_text or chat.send_message."""
+    pieces: list[str] = []
+    for call in update.message.reply_text.await_args_list:
+        if call.args:
+            pieces.append(call.args[0])
+    for call in update.effective_chat.send_message.await_args_list:
+        if call.args:
+            pieces.append(call.args[0])
+        elif "text" in call.kwargs:
+            pieces.append(call.kwargs["text"])
+    return "\n".join(pieces)
 
 
 @pytest.mark.asyncio
@@ -63,8 +74,20 @@ async def test_unread_reports_gmail_error(monkeypatch, authorized_update):
 @pytest.mark.asyncio
 async def test_analyze_runs_claude_and_persists(monkeypatch, authorized_update):
     pending = [
-        {"gmail_message_id": "g1", "sender": "alice@example.com", "subject": "Hi", "body": "x"},
-        {"gmail_message_id": "g2", "sender": "bob@example.com", "subject": "Re", "body": "y"},
+        {
+            "id": 1,
+            "gmail_message_id": "g1",
+            "sender": "alice@example.com",
+            "subject": "Hi",
+            "body": "x",
+        },
+        {
+            "id": 2,
+            "gmail_message_id": "g2",
+            "sender": "bob@example.com",
+            "subject": "Re",
+            "body": "y",
+        },
     ]
     monkeypatch.setattr(handlers.db, "get_unprocessed_emails", lambda: pending)
     monkeypatch.setattr(
@@ -104,7 +127,7 @@ async def test_analyze_adds_warning_block_on_claude_failure(monkeypatch, authori
     monkeypatch.setattr(
         handlers.db,
         "get_unprocessed_emails",
-        lambda: [{"gmail_message_id": "g1", "sender": "alice@example.com"}],
+        lambda: [{"id": 9, "gmail_message_id": "g1", "sender": "alice@example.com"}],
     )
     monkeypatch.setattr(handlers, "analyze_email", lambda _: None)
     monkeypatch.setattr(handlers.db, "update_analysis", lambda *_: None)
@@ -112,20 +135,23 @@ async def test_analyze_adds_warning_block_on_claude_failure(monkeypatch, authori
     text = _all_reply_texts(authorized_update)
     assert "⚠️" in text
     assert "analysis failed" in text
+    assert "\\#9" in text  # warning still surfaces the row id
 
 
 @pytest.mark.asyncio
 async def test_inbox_lists_analyzed_rows(monkeypatch, authorized_update):
     rows = [
         {
+            "id": 4,
             "sender": "alice@example.com",
             "subject": "Done",
             "ai_summary": "All set.",
             "urgency_score": 9,
             "processed_at": "2026-04-30T10:00:00",
         },
-        {"sender": "skip@example.com", "subject": "ignore", "processed_at": None},
+        {"id": 5, "sender": "skip@example.com", "subject": "ignore", "processed_at": None},
         {
+            "id": 6,
             "sender": "bob@example.com",
             "subject": "Pending",
             "ai_summary": "Maybe.",
@@ -139,8 +165,11 @@ async def test_inbox_lists_analyzed_rows(monkeypatch, authorized_update):
     assert "alice@example\\.com" in text
     assert "bob@example\\.com" in text
     assert "skip@example\\.com" not in text
+    assert "\\#4" in text  # row ids visible so /reply target is obvious
+    assert "\\#6" in text
     assert "🔴" in text
     assert "🟢" in text
+    assert "/reply <id>" in text  # helper tip footer
 
 
 @pytest.mark.asyncio
@@ -235,7 +264,7 @@ async def test_reply_command_persists_drafts_and_renders(
 
     assert {t for _, t, _ in inserted} == {"professional", "friendly", "brief"}
     text = _all_reply_texts(authorized_update)
-    assert "Drafting replies" in text
+    assert "Drafting" in text
     assert "Professional" in text or "🎩" in text
 
 
@@ -254,6 +283,7 @@ def _make_callback_update(data: str, chat_id: int = 42) -> MagicMock:
     update = MagicMock()
     update.effective_chat.id = chat_id
     update.effective_chat.send_message = AsyncMock()
+    update.effective_chat.send_chat_action = AsyncMock()
     update.callback_query.data = data
     update.callback_query.answer = AsyncMock()
     update.message = None
@@ -485,6 +515,59 @@ async def test_cb_edit_save_overwrites_then_sends(monkeypatch, authorized_update
 
 
 @pytest.mark.asyncio
+async def test_unread_sends_typing_indicator(monkeypatch, authorized_update):
+    monkeypatch.setattr(handlers, "gmail_fetch_recent", lambda max_results, unread_only: [])
+    await handlers.unread(authorized_update, None)
+    authorized_update.effective_chat.send_chat_action.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_analyze_sends_progress_placeholder_when_pending(monkeypatch, authorized_update):
+    monkeypatch.setattr(
+        handlers.db,
+        "get_unprocessed_emails",
+        lambda: [
+            {"id": 1, "gmail_message_id": "g1", "sender": "a@a", "subject": "s", "body": "x"},
+            {"id": 2, "gmail_message_id": "g2", "sender": "b@b", "subject": "s", "body": "y"},
+        ],
+    )
+    monkeypatch.setattr(
+        handlers,
+        "analyze_email",
+        lambda email: {
+            "summary": "ok",
+            "category": "Work",
+            "sentiment": "Casual",
+            "action_required": "Reply",
+            "urgency_score": 3,
+        },
+    )
+    monkeypatch.setattr(handlers.db, "update_analysis", lambda *_: None)
+
+    await handlers.analyze(authorized_update, None)
+
+    text = _all_reply_texts(authorized_update)
+    assert "Analyzing 2 emails" in text
+    authorized_update.effective_chat.send_chat_action.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_analyze_skips_progress_placeholder_when_empty(monkeypatch, authorized_update):
+    monkeypatch.setattr(handlers.db, "get_unprocessed_emails", list)
+    await handlers.analyze(authorized_update, None)
+    authorized_update.message.reply_text.assert_awaited_once_with("No emails to analyze.")
+
+
+@pytest.mark.asyncio
+async def test_typing_failure_does_not_break_command(monkeypatch, authorized_update):
+    """If send_chat_action raises, the command must still complete."""
+    authorized_update.effective_chat.send_chat_action.side_effect = RuntimeError("api down")
+    monkeypatch.setattr(handlers, "gmail_fetch_recent", lambda max_results, unread_only: [])
+    await handlers.unread(authorized_update, None)
+    authorized_update.message.reply_text.assert_awaited_once_with("No unread emails.")
+
+
+@pytest.mark.asyncio
 async def test_pause_command_calls_push_pause_and_replies(monkeypatch, authorized_update):
     pause_calls = {"n": 0}
 
@@ -554,22 +637,64 @@ async def test_cb_notify_done_falls_back_when_edit_fails(monkeypatch, reply_cont
 
 
 @pytest.mark.asyncio
-async def test_cb_notify_reply_delegates_to_reply_command(monkeypatch, reply_context):
+async def test_cb_notify_reply_runs_reply_flow_without_mutating_update(monkeypatch, reply_context):
+    """Critical: must not assign update.message — PTB freezes Update objects."""
     monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
     monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
 
     captured: dict = {}
 
-    async def fake_reply(update, context):
-        captured["args"] = list(context.args)
+    async def fake_flow(update, email_id):
+        captured["email_id"] = email_id
         captured["chat_id"] = update.effective_chat.id
 
-    monkeypatch.setattr(handlers, "reply_command", fake_reply)
+    monkeypatch.setattr(handlers, "_run_reply_flow", fake_flow)
 
     update = _make_callback_update("n:reply:7")
+    original_message = update.message
     await handlers.cb_notify_reply(update, reply_context)
 
-    assert captured == {"args": ["7"], "chat_id": 42}
+    assert captured == {"email_id": 7, "chat_id": 42}
+    # Regression guard: cb must not have mutated update.message.
+    assert update.message is original_message
+
+
+@pytest.mark.asyncio
+async def test_run_reply_flow_falls_back_to_plain_text_on_markdown_error(
+    monkeypatch, authorized_update
+):
+    """If MARKDOWN_V2 send raises, the user must still get the drafts as plain text."""
+    monkeypatch.setattr(
+        handlers.db,
+        "get_email_by_row_id",
+        lambda _: _analyzed_email_row(),
+    )
+    monkeypatch.setattr(
+        handlers,
+        "generate_replies",
+        lambda _: {"professional": "P", "friendly": "F", "brief": "B"},
+    )
+    monkeypatch.setattr(handlers.db, "insert_draft_reply", lambda *_: 1)
+    monkeypatch.setattr(
+        handlers.db,
+        "get_draft_by_id",
+        lambda did: {"id": did, "tone": "professional", "draft_text": "P"},
+    )
+
+    calls = []
+
+    async def fake_send(text, **kwargs):
+        calls.append(kwargs.get("parse_mode"))
+        if kwargs.get("parse_mode") is not None:
+            raise RuntimeError("Bad Request: can't parse entities")
+
+    authorized_update.effective_chat.send_message = AsyncMock(side_effect=fake_send)
+
+    await handlers._run_reply_flow(authorized_update, 5)
+
+    # Must have tried MarkdownV2 first, then retried without parse_mode.
+    assert any(p is not None for p in calls)
+    assert any(p is None for p in calls)
 
 
 @pytest.mark.asyncio
