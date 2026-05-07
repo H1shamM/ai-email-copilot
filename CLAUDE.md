@@ -195,7 +195,7 @@ Week 3 (Telegram pivot) shipped 2026-05-05; Week 6 (AWS deployment) started 2026
 
 **Week 6 — in progress**
 - ✅ Story W6-A — EC2 + Caddy + systemd, live at `https://<eip>.nip.io` (PR #29 + Track 1 on 2026-05-07)
-- 🔲 Story W6-B — GitHub Actions auto-deploy on push to main
+- ✅ Story W6-B — GitHub Actions auto-deploy on push to main via OIDC + SSM (PR #31 merged 2026-05-07; first green run #25499474023)
 - 🔲 Story W6-C — CloudWatch logs + alarms + enriched `/health` + weekly OAuth self-ping
 
 **Weeks 4–5 (Calendar, Agentic) deferred** until Week 6 deployment closes out. Update PROGRESS.md when re-prioritizing.

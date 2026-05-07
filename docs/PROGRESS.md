@@ -173,15 +173,23 @@ By end of week, must demonstrate:
 3. `5e3059c` — `sslip.io` was rate-limited by Let's Encrypt; switched default hostname to `nip.io`
 
 #### Story W6-B: GitHub Actions auto-deploy on push to main
-**Branch:** `feature/aws-deploy-cd`
-**Status:** 🔲 Not started
+**Branch:** `feature/aws-deploy-ci-cd` (Track 2) + manual OIDC + role setup (Track 1)
+**Status:** ✅ Complete (PR #31 merged 2026-05-07; first green deploy run #25499474023)
 **Size:** M
-**Scope:**
-- `.github/workflows/deploy.yml` triggered on push to `main`
-- SSM `send-command` from Actions runner pulls the repo + restarts `copilot.service`
-- IAM user for CI with minimal `ssm:SendCommand` policy; access keys in repo secrets
-- Rollback story: re-run a previous successful workflow with the older commit SHA
-- README + AWS_DEPLOY.md updated with the CD section
+**Scope shipped:**
+- `.github/workflows/deploy.yml` — triggers on push to `main` + `workflow_dispatch`. Concurrency `deploy-prod` queues parallel pushes.
+- **OIDC** auth (no long-lived AWS access keys in repo secrets); trust policy restricted to `repo:H1shamM/ai-email-copilot:ref:refs/heads/main`.
+- IAM role `copilot-github-deploy` with minimal scope: `ssm:SendCommand` on the one instance + `AWS-RunShellScript` document, `ssm:GetCommandInvocation` on `*`.
+- Deploy command on the instance: `git checkout <sha> && pip install -q -r requirements.txt && systemctl restart copilot`. Pinned to `${{ github.sha }}` so re-running an older workflow run rolls back to that commit.
+- Smoke-check on `/health` after restart with 3 retries.
+- Rollback documented: Actions UI → previous successful run → *Re-run all jobs*.
+
+**Bug caught during the live setup** (runbook patched in main):
+- `ec379b8` — PowerShell parses `$ACCOUNT_ID:oidc-provider/...` as scope-modifier syntax, leaking an empty account ID into the Federated ARN. Switched the runbook to `${ACCOUNT_ID}` curly-brace form and added `Get-Content` sanity-checks.
+
+**Follow-ups noted but not blocking:**
+- Node 20 deprecation warning on `aws-actions/configure-aws-credentials@v4`. Bumping to v5 (or opting into Node 24) before Sept 2026.
+- Reboot survival test from W6-A still pending.
 
 #### Story W6-C: Observability + OAuth health
 **Branch:** `feature/aws-monitoring-oauth-health`
