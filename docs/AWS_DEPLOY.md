@@ -1,6 +1,6 @@
 # AWS Deployment Runbook
 
-Single-instance deployment of AI Email Copilot to AWS EC2 with HTTPS via Let's Encrypt and a stable hostname (`<dashed-ip>.sslip.io`). Closes Week 6 Story A (#28).
+Single-instance deployment of AI Email Copilot to AWS EC2 with HTTPS via Let's Encrypt and a stable hostname (`<dashed-ip>.nip.io`). Closes Week 6 Story A (#28).
 
 **Topology**: one `t4g.nano` instance in `eu-west-1`, Elastic IP, Caddy reverse proxy on 443, FastAPI/uvicorn on 127.0.0.1:8000 under `systemd`. No SSH — shell access is via AWS Systems Manager Session Manager.
 
@@ -129,7 +129,7 @@ aws ec2 associate-address --region $env:AWS_REGION `
   --instance-id $INSTANCE_ID --allocation-id $EIP_ALLOC | Out-Null
 
 $EIP_DASHED = $EIP.Replace(".", "-")
-Write-Host "Public hostname: https://$EIP_DASHED.sslip.io"
+Write-Host "Public hostname: https://$EIP_DASHED.nip.io"
 ```
 
 ---
@@ -191,7 +191,7 @@ nano /home/copilot/email-assistant/.env
 
 Set every key from `.env.example`. Critically:
 
-- `TELEGRAM_WEBHOOK_URL=https://<EIP_DASHED>.sslip.io/telegram/webhook` (replace `<EIP_DASHED>` with the dashed form of your EIP from Step 6).
+- `TELEGRAM_WEBHOOK_URL=https://<EIP_DASHED>.nip.io/telegram/webhook` (replace `<EIP_DASHED>` with the dashed form of your EIP from Step 6).
 - `TELEGRAM_PUSH_INTERVAL_MINUTES=5` (or whatever cadence you want).
 - All other keys identical to your local `.env`.
 
@@ -249,7 +249,7 @@ TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
 EIP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
   http://169.254.169.254/latest/meta-data/public-ipv4)
 EIP_DASHED=${EIP//./-}
-echo "EIP=$EIP  hostname=$EIP_DASHED.sslip.io"
+echo "EIP=$EIP  hostname=$EIP_DASHED.nip.io"
 
 # 2. Generate the real Caddyfile from the template (no manual editing).
 sed "s/<EIP_DASHED>/$EIP_DASHED/" /home/copilot/email-assistant/infra/Caddyfile.template \
@@ -257,7 +257,7 @@ sed "s/<EIP_DASHED>/$EIP_DASHED/" /home/copilot/email-assistant/infra/Caddyfile.
 
 # 3. Confirm the placeholder was replaced before reloading.
 grep -E "sslip\.io" /etc/caddy/Caddyfile
-# Must print: <real-dashed-ip>.sslip.io {  — NOT <EIP_DASHED>.sslip.io
+# Must print: <real-dashed-ip>.nip.io {  — NOT <EIP_DASHED>.nip.io
 
 mkdir -p /var/log/caddy
 chown caddy:caddy /var/log/caddy
@@ -268,7 +268,7 @@ journalctl -u caddy -n 30 --no-pager
 
 You should see Caddy pulling a Let's Encrypt cert within ~10 seconds (`certificate obtained successfully`). If you see ACME errors, check that 443 is reachable from the public internet:
 ```bash
-curl -v https://$EIP_DASHED.sslip.io/  # should at least connect (200 from the bot or 502 from caddy)
+curl -v https://$EIP_DASHED.nip.io/  # should at least connect (200 from the bot or 502 from caddy)
 ```
 
 > **Don't manually edit `/etc/caddy/Caddyfile`** — `<EIP_DASHED>` is the only value that needs substitution and the IMDS-driven `sed` above does it deterministically. Hand-editing risks the exact failure caught during W6-A's first deploy: the placeholder leaked through unchanged and Caddy refused to load.
@@ -299,12 +299,12 @@ Look for:
 
 ```powershell
 # 1. /health endpoint
-curl https://$EIP_DASHED.sslip.io/health
+curl https://$EIP_DASHED.nip.io/health
 # Expected: {"ok":true}
 
 # 2. Telegram webhook
 curl "https://api.telegram.org/bot$($env:TELEGRAM_BOT_TOKEN)/getWebhookInfo"
-# Expected: url matches your sslip.io URL, last_error_message is empty
+# Expected: url matches your nip.io URL, last_error_message is empty
 ```
 
 **In Telegram**:
@@ -366,7 +366,8 @@ $env:TELEGRAM_BOT_TOKEN = "<your bot token>"
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `RunInstances` returns `InvalidParameterValue` for the IAM profile | IAM eventual consistency | Wait 30s and retry |
-| Caddy logs `no such host` for sslip.io | Egress DNS blocked | Check the security group's egress; default-allow-all should fix |
+| Caddy logs `no such host` for nip.io | Egress DNS blocked | Check the security group's egress; default-allow-all should fix |
+| Caddy logs `HTTP 429 ... too many certificates ... already issued for "nip.io"` | Public LE rate limit on the shared free-DNS domain | Swap to a different free domain: `sed -i 's/nip\.io/sslip.io/g' /etc/caddy/Caddyfile /home/copilot/email-assistant/.env && systemctl reload caddy && systemctl restart copilot`. Both nip.io and sslip.io occasionally fill their LE buckets; alternating works |
 | `getWebhookInfo` shows `last_error_message: SSL handshake failed` | Caddy hasn't issued the cert yet | Wait 60s; check `journalctl -u caddy` for ACME errors |
 | `journalctl -u copilot` shows `telegram.error.TimedOut` | Cold-start TLS slowness | Already handled by `bot.py`'s 30s `HTTPXRequest` timeout (#25) |
 | Bot misses ticks under network flakiness | Was the synchronous-blocking issue | Already fixed in #27 — push tick uses `asyncio.to_thread` |

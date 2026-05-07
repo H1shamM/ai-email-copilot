@@ -43,7 +43,7 @@ See [`docs/GITHUB_WORKFLOW.md`](docs/GITHUB_WORKFLOW.md) for the branch/PR/CI pr
 
 ## Deployment
 
-For production, the bot runs on a single AWS EC2 instance behind Caddy/HTTPS at a stable `<eip>.sslip.io` hostname (no domain required).
+For production, the bot runs on a single AWS EC2 instance behind Caddy/HTTPS at a stable `<eip>.nip.io` hostname (no domain required).
 
 Step-by-step CLI runbook: [`docs/AWS_DEPLOY.md`](docs/AWS_DEPLOY.md). Steady-state cost ~$5/month plus Anthropic API charges. Templates for Caddy + systemd live in [`infra/`](infra/).
 

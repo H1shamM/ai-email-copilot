@@ -1,13 +1,18 @@
-# Caddy reverse proxy for AI Email Copilot
+# Caddy reverse proxy for AI Email Copilot.
 #
 # Replace <EIP_DASHED> with the dashed-IPv4 form of the instance's Elastic IP,
-# e.g. 52-49-123-45 for 52.49.123.45. sslip.io resolves *.<dashed-ip>.sslip.io
-# to that IP, so Let's Encrypt can issue a real cert without any DNS setup.
+# e.g. 52-49-123-45 for 52.49.123.45. nip.io resolves *.<dashed-ip>.nip.io to
+# that IP, so Let's Encrypt can issue a real cert without any DNS setup.
+#
+# Why nip.io and not sslip.io: the public LE rate limit is 250 certs per
+# registered domain per 168h. sslip.io routinely gets exhausted because so
+# many people use it. nip.io is a separate eTLD+1 → separate LE bucket. If
+# nip.io ever rate-limits too, swap to sslip.io with `sed -i s/nip\.io/sslip.io/g`.
 #
 # Drop this file at /etc/caddy/Caddyfile (after substitution) and run:
 #   sudo systemctl reload caddy
 
-<EIP_DASHED>.sslip.io {
+<EIP_DASHED>.nip.io {
     reverse_proxy localhost:8000
     encode zstd gzip
     log {
