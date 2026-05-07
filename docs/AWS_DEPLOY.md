@@ -333,6 +333,139 @@ Once the deploy is live, on your laptop:
 
 ---
 
+## CI/CD: GitHub Actions auto-deploy (W6-B)
+
+Once Story A is live, this section sets up auto-deploy on every push to `main`. The workflow file is `.github/workflows/deploy.yml` — it uses **OIDC** (no long-lived AWS access keys) to assume an IAM role that's allowed to send a deploy command via SSM to the one instance, then smoke-checks `/health` to verify.
+
+### Step CD-1 — Create the GitHub OIDC identity provider in IAM
+
+Run on your **laptop** (one-time per AWS account):
+
+```powershell
+aws iam create-open-id-connect-provider `
+  --url https://token.actions.githubusercontent.com `
+  --client-id-list sts.amazonaws.com `
+  --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
+```
+
+> The thumbprint is GitHub's well-known cert thumbprint. AWS verifies the OIDC JWT against this; the OIDC token is short-lived (15 min) and per-workflow-run, so even if intercepted there's nothing to steal long-term. AWS now also supports `--thumbprint-list` being optional (auto-fetched), but pinning it is the canonical pattern.
+
+If the provider already exists in your account from another repo, this returns `EntityAlreadyExistsException` — that's fine, skip to CD-2.
+
+### Step CD-2 — Capture the AWS account ID
+
+```powershell
+$ACCOUNT_ID = aws sts get-caller-identity --query Account --output text
+Write-Host "ACCOUNT_ID=$ACCOUNT_ID"
+```
+
+### Step CD-3 — Trust policy (who can assume the role)
+
+Replace `H1shamM/ai-email-copilot` with your actual fork if different. The `:sub` condition restricts assumption to commits on this repo's `main` branch — a fork can't get into your AWS account.
+
+```powershell
+@"
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": {
+      "Federated": "arn:aws:iam::$ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
+    },
+    "Action": "sts:AssumeRoleWithWebIdentity",
+    "Condition": {
+      "StringEquals": {
+        "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+        "token.actions.githubusercontent.com:sub": "repo:H1shamM/ai-email-copilot:ref:refs/heads/main"
+      }
+    }
+  }]
+}
+"@ | Out-File -FilePath trust-policy.json -Encoding ascii
+```
+
+### Step CD-4 — Permission policy (what the role can do)
+
+Scoped to one SSM action on one instance + one document. Anything more is unnecessary.
+
+```powershell
+@"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DeployViaSSMSendCommand",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": [
+        "arn:aws:ec2:$($env:AWS_REGION):$($ACCOUNT_ID):instance/$INSTANCE_ID",
+        "arn:aws:ssm:$($env:AWS_REGION)::document/AWS-RunShellScript"
+      ]
+    },
+    {
+      "Sid": "ReadCommandStatus",
+      "Effect": "Allow",
+      "Action": "ssm:GetCommandInvocation",
+      "Resource": "*"
+    }
+  ]
+}
+"@ | Out-File -FilePath deploy-policy.json -Encoding ascii
+```
+
+### Step CD-5 — Create the role and attach the policy
+
+```powershell
+$ROLE_ARN = aws iam create-role `
+  --role-name copilot-github-deploy `
+  --assume-role-policy-document file://trust-policy.json `
+  --description "GitHub Actions deploys to the AI Email Copilot EC2 instance via SSM" `
+  --query "Role.Arn" --output text
+
+aws iam put-role-policy `
+  --role-name copilot-github-deploy `
+  --policy-name copilot-github-deploy-inline `
+  --policy-document file://deploy-policy.json
+
+Write-Host "ROLE_ARN=$ROLE_ARN"
+
+# Clean up local files (the policies are now in IAM)
+Remove-Item trust-policy.json, deploy-policy.json
+```
+
+### Step CD-6 — Add repo secrets
+
+```powershell
+gh secret set AWS_DEPLOY_ROLE_ARN --body "$ROLE_ARN"
+gh secret set AWS_INSTANCE_ID --body "$INSTANCE_ID"
+```
+
+(Or via the GitHub web UI: *Settings → Secrets and variables → Actions → New repository secret*.)
+
+### Step CD-7 — Trigger a deploy
+
+The workflow already exists at `.github/workflows/deploy.yml` after PR for #30 merges. To trigger:
+
+- **Automatic:** any subsequent push to `main` runs it.
+- **Manual:** `gh workflow run deploy.yml` (or the Actions UI's *Run workflow* button).
+
+Watch it: `gh run watch` or the Actions tab. A successful run logs:
+
+```
+Configure AWS credentials via OIDC ... ok
+Send deploy command via SSM ... command_id=...
+Wait for SSM command ... [1/30] Status: Success
+Smoke-check /health ... {"ok":true}
+```
+
+### Step CD-8 — Rollback
+
+GitHub Actions UI → **Actions** tab → pick a previous successful **Deploy** run → **Re-run all jobs**. The re-run inherits that run's `github.sha`, so the deploy script checks out the older commit and restarts the bot. No git surgery on the instance.
+
+If the bad commit is already on `main`, you can also revert via PR (`git revert <sha> && open PR`) — the merge of that revert auto-deploys via the normal workflow.
+
+---
+
 ## Teardown (when you want to stop paying)
 
 ```powershell
@@ -357,6 +490,12 @@ aws iam delete-role --role-name $env:IAM_ROLE_NAME
 # 5. Unregister the Telegram webhook so the bot doesn't keep retrying a dead URL
 $env:TELEGRAM_BOT_TOKEN = "<your bot token>"
 .venv\Scripts\python -c "import asyncio,os; from telegram import Bot; asyncio.run(Bot(os.environ['TELEGRAM_BOT_TOKEN']).delete_webhook())"
+
+# 6. (CI/CD only) Tear down the GitHub Actions deploy role
+aws iam delete-role-policy --role-name copilot-github-deploy --policy-name copilot-github-deploy-inline
+aws iam delete-role --role-name copilot-github-deploy
+# Only delete the OIDC provider if no other repo uses it:
+# aws iam delete-open-id-connect-provider --open-id-connect-provider-arn arn:aws:iam::$ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com
 ```
 
 ---
@@ -372,6 +511,8 @@ $env:TELEGRAM_BOT_TOKEN = "<your bot token>"
 | `journalctl -u copilot` shows `telegram.error.TimedOut` | Cold-start TLS slowness | Already handled by `bot.py`'s 30s `HTTPXRequest` timeout (#25) |
 | Bot misses ticks under network flakiness | Was the synchronous-blocking issue | Already fixed in #27 — push tick uses `asyncio.to_thread` |
 | `journalctl -u copilot` shows `invalid_grant` for Gmail | Google revoked the refresh token (Testing app, ~7 days idle) | Re-run OAuth on laptop, re-bootstrap `token.pickle` per Step 10. Long-term fix: publish the OAuth app or move it to External + Production status |
+| Deploy workflow fails with `Could not assume role` | OIDC trust policy doesn't match the workflow's `:sub` claim | Check the role's trust policy: it must list the exact repo + branch (`repo:OWNER/REPO:ref:refs/heads/main`). A fork or a non-`main` branch can't assume |
+| Deploy workflow fails on `Smoke-check /health` after `SSM command succeeded` | uvicorn started but the app errored at runtime; previous version is gone | `aws ssm start-session --target $INSTANCE_ID` then `journalctl -u copilot -n 200`. To restore the previous good commit, re-run that workflow in the Actions UI |
 
 ---
 
