@@ -11,6 +11,7 @@ Idempotency lives in the DB: `notified_at` is the gate, so restarts and
 overlapping ticks never double-notify the same row.
 """
 
+import asyncio
 import logging
 import os
 from typing import TYPE_CHECKING
@@ -77,38 +78,74 @@ async def _notify_one(application: "Application", chat_id: int, row: dict) -> bo
 
 
 async def tick(application: "Application", *, threshold: int) -> int:
-    """Run one push iteration. Returns the number of notifications sent."""
+    """Run one push iteration. Returns the number of notifications sent.
+
+    All blocking I/O (Gmail, Claude, SQLite) runs via `asyncio.to_thread` so the
+    FastAPI event loop stays responsive even when the network stalls.
+    """
     chat_id = _authorized_chat_id()
     if chat_id is None:
         logger.warning("TELEGRAM_AUTHORIZED_CHAT_ID unset; skipping push tick")
         return 0
 
-    _ingest_and_analyze()
+    await _ingest_and_analyze()
 
-    candidates = db.get_high_priority_unnotified(threshold)
+    candidates = await asyncio.to_thread(db.get_high_priority_unnotified, threshold)
     sent = 0
     for row in candidates:
         if await _notify_one(application, chat_id, row):
-            db.mark_email_notified(row["gmail_message_id"])
+            await asyncio.to_thread(db.mark_email_notified, row["gmail_message_id"])
             sent += 1
     return sent
 
 
-def _ingest_and_analyze() -> None:
-    """Pull recent unread, persist new rows, analyze the unprocessed."""
+def _is_transient_network_error(exc: BaseException) -> bool:
+    """Whether `exc` is a known-flaky network condition (DNS, timeout, conn reset).
+
+    `socket.gaierror` and `httplib2.error.ServerNotFoundError` both subclass
+    `OSError`, and `TimeoutError` covers Python's read/connect timeouts.
+    """
+    return isinstance(exc, (TimeoutError, OSError))
+
+
+async def _ingest_and_analyze() -> None:
+    """Pull recent unread, persist new rows, analyze the unprocessed.
+
+    Each external call runs in a worker thread so the loop never blocks. Known
+    transient network failures degrade to a one-line WARNING; truly unexpected
+    errors still log a full traceback for debuggability.
+    """
     try:
-        emails = gmail_fetch_recent(max_results=DEFAULT_FETCH_BATCH, unread_only=True)
-    except Exception:  # noqa: BLE001
-        logger.exception("Gmail fetch failed during push tick")
+        emails = await asyncio.to_thread(
+            gmail_fetch_recent,
+            max_results=DEFAULT_FETCH_BATCH,
+            unread_only=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        if _is_transient_network_error(exc):
+            logger.warning("Gmail fetch transient error during push tick: %s", exc)
+        else:
+            logger.exception("Gmail fetch failed during push tick")
         return
 
     for email in emails:
-        db.insert_email(email)
+        try:
+            await asyncio.to_thread(db.insert_email, email)
+        except Exception:  # noqa: BLE001
+            logger.exception("DB insert failed for gmail_message_id=%s", email.get("id"))
 
-    for pending in db.get_unprocessed_emails():
-        analysis = analyze_email(pending)
+    pending = await asyncio.to_thread(db.get_unprocessed_emails)
+    for em in pending:
+        try:
+            analysis = await asyncio.to_thread(analyze_email, em)
+        except Exception as exc:  # noqa: BLE001
+            if _is_transient_network_error(exc):
+                logger.warning("Claude transient error analyzing %s: %s", em.get("id"), exc)
+            else:
+                logger.exception("Claude analysis failed for %s", em.get("id"))
+            continue
         if analysis:
-            db.update_analysis(pending["gmail_message_id"], analysis)
+            await asyncio.to_thread(db.update_analysis, em["gmail_message_id"], analysis)
 
 
 def _authorized_chat_id() -> int | None:
