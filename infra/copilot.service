@@ -1,0 +1,33 @@
+[Unit]
+Description=AI Email Copilot (FastAPI + Telegram bot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=copilot
+Group=copilot
+WorkingDirectory=/home/copilot/email-assistant
+EnvironmentFile=/home/copilot/email-assistant/.env
+ExecStart=/home/copilot/email-assistant/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Hardening — bot only needs to read its own dir + write SQLite + token.pickle.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/copilot/email-assistant
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

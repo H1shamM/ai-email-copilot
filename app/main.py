@@ -65,6 +65,16 @@ def root():
     return {"message": "AI Email Copilot running"}
 
 
+@app.get("/health")
+def health():
+    """Liveness probe for Caddy / CloudWatch / weekly self-ping cron.
+
+    W6-A keeps this trivial; W6-C will enrich it with DB connectivity, Telegram
+    `getMe`, and Gmail token validity checks so stale OAuth gets surfaced early.
+    """
+    return {"ok": True}
+
+
 @app.get("/emails")
 def get_emails(
     max_results: int = Query(default=50, le=100),

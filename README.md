@@ -23,11 +23,13 @@ uvicorn app.main:app --reload
 ```
 
 Endpoints:
-- `GET  /` — health check
+- `GET  /` — root banner
+- `GET  /health` — liveness probe (used by Caddy + monitoring)
 - `GET  /emails` — fetch live from Gmail (no DB write)
 - `POST /emails/fetch` — fetch and store in SQLite
 - `POST /emails/analyze` — run Claude analysis on unprocessed emails
 - `GET  /emails/analyzed` — list emails with stored analysis
+- `POST /telegram/webhook` — Telegram update handler (production traffic enters here)
 
 ## Development
 
@@ -39,6 +41,14 @@ flake8 app/ tests/
 
 See [`docs/GITHUB_WORKFLOW.md`](docs/GITHUB_WORKFLOW.md) for the branch/PR/CI process.
 
+## Deployment
+
+For production, the bot runs on a single AWS EC2 instance behind Caddy/HTTPS at a stable `<eip>.sslip.io` hostname (no domain required).
+
+Step-by-step CLI runbook: [`docs/AWS_DEPLOY.md`](docs/AWS_DEPLOY.md). Steady-state cost ~$5/month plus Anthropic API charges. Templates for Caddy + systemd live in [`infra/`](infra/).
+
+CI/CD (auto-deploy on `main` push, monitoring) ships in subsequent stories — see issue tracker.
+
 ## Project Structure
 
 ```
@@ -47,8 +57,16 @@ app/
 ├── gmail/             OAuth + Gmail API client
 ├── ai/                Claude API integration
 ├── database/          SQLite layer
+├── telegram/          bot, handlers, formatting, push scheduler
 └── models/            Pydantic schemas
 tests/
 ├── unit/
 └── integration/
+infra/
+├── Caddyfile.template
+└── copilot.service
+docs/
+├── PRD.md, PROGRESS.md
+├── PROFESSIONAL_WORKFLOW.md
+└── AWS_DEPLOY.md
 ```
