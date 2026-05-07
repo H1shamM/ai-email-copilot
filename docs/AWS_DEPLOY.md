@@ -363,6 +363,8 @@ Write-Host "ACCOUNT_ID=$ACCOUNT_ID"
 
 Replace `H1shamM/ai-email-copilot` with your actual fork if different. The `:sub` condition restricts assumption to commits on this repo's `main` branch — a fork can't get into your AWS account.
 
+> **PowerShell gotcha:** the trust policy contains `$ACCOUNT_ID:oidc-provider/...`. Because `:` is PowerShell's scope-separator syntax, you **must** wrap the variable as `${ACCOUNT_ID}`, not bare `$ACCOUNT_ID`. Without the curly braces, the colon eats the variable name and the ARN ends up as `arn:aws:iam:::oidc-provider/...` — AWS rejects it as a malformed policy.
+
 ```powershell
 @"
 {
@@ -370,7 +372,7 @@ Replace `H1shamM/ai-email-copilot` with your actual fork if different. The `:sub
   "Statement": [{
     "Effect": "Allow",
     "Principal": {
-      "Federated": "arn:aws:iam::$ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
+      "Federated": "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
     },
     "Action": "sts:AssumeRoleWithWebIdentity",
     "Condition": {
@@ -382,6 +384,13 @@ Replace `H1shamM/ai-email-copilot` with your actual fork if different. The `:sub
   }]
 }
 "@ | Out-File -FilePath trust-policy.json -Encoding ascii
+
+# Sanity-check the substitution before submitting to AWS:
+Get-Content trust-policy.json
+# The "Federated" line must contain your numeric account ID,
+# e.g. "arn:aws:iam::123456789012:oidc-provider/...". If it shows
+# "arn:aws:iam:::oidc-provider/..." (empty account), $ACCOUNT_ID
+# wasn't set in this shell — re-run Step CD-2.
 ```
 
 ### Step CD-4 — Permission policy (what the role can do)
@@ -398,8 +407,8 @@ Scoped to one SSM action on one instance + one document. Anything more is unnece
       "Effect": "Allow",
       "Action": "ssm:SendCommand",
       "Resource": [
-        "arn:aws:ec2:$($env:AWS_REGION):$($ACCOUNT_ID):instance/$INSTANCE_ID",
-        "arn:aws:ssm:$($env:AWS_REGION)::document/AWS-RunShellScript"
+        "arn:aws:ec2:${env:AWS_REGION}:${ACCOUNT_ID}:instance/${INSTANCE_ID}",
+        "arn:aws:ssm:${env:AWS_REGION}::document/AWS-RunShellScript"
       ]
     },
     {
@@ -411,6 +420,8 @@ Scoped to one SSM action on one instance + one document. Anything more is unnece
   ]
 }
 "@ | Out-File -FilePath deploy-policy.json -Encoding ascii
+
+Get-Content deploy-policy.json   # verify the values are interpolated
 ```
 
 ### Step CD-5 — Create the role and attach the policy
