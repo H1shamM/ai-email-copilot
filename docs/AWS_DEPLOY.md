@@ -240,10 +240,24 @@ aws s3api delete-bucket --bucket $env:S3_BOOTSTRAP_BUCKET --region $env:AWS_REGI
 
 ## Step 11 — Caddy reverse proxy (on the instance)
 
+The instance reads its own EIP from IMDSv2, so there's nothing to type by hand:
+
 ```bash
-# Substitute the EIP into the template. Replace <EIP_DASHED> with your actual dashed IP.
-sed "s/<EIP_DASHED>/52-49-123-45/" /home/copilot/email-assistant/infra/Caddyfile.template \
+# 1. Pull the public IP from the instance metadata service.
+TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+EIP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/public-ipv4)
+EIP_DASHED=${EIP//./-}
+echo "EIP=$EIP  hostname=$EIP_DASHED.sslip.io"
+
+# 2. Generate the real Caddyfile from the template (no manual editing).
+sed "s/<EIP_DASHED>/$EIP_DASHED/" /home/copilot/email-assistant/infra/Caddyfile.template \
   > /etc/caddy/Caddyfile
+
+# 3. Confirm the placeholder was replaced before reloading.
+grep -E "sslip\.io" /etc/caddy/Caddyfile
+# Must print: <real-dashed-ip>.sslip.io {  — NOT <EIP_DASHED>.sslip.io
 
 mkdir -p /var/log/caddy
 chown caddy:caddy /var/log/caddy
@@ -252,10 +266,12 @@ systemctl reload caddy
 journalctl -u caddy -n 30 --no-pager
 ```
 
-You should see Caddy pulling a Let's Encrypt cert within ~10 seconds. If you see ACME errors, check that 443 is reachable from the public internet:
+You should see Caddy pulling a Let's Encrypt cert within ~10 seconds (`certificate obtained successfully`). If you see ACME errors, check that 443 is reachable from the public internet:
 ```bash
-curl -v https://YOUR-EIP/  # should at least connect
+curl -v https://$EIP_DASHED.sslip.io/  # should at least connect (200 from the bot or 502 from caddy)
 ```
+
+> **Don't manually edit `/etc/caddy/Caddyfile`** — `<EIP_DASHED>` is the only value that needs substitution and the IMDS-driven `sed` above does it deterministically. Hand-editing risks the exact failure caught during W6-A's first deploy: the placeholder leaked through unchanged and Caddy refused to load.
 
 ---
 
