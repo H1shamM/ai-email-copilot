@@ -1,5 +1,6 @@
 """Unit tests for the push scheduler — Telegram + Gmail + Claude all mocked."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -50,6 +51,11 @@ def _stub_application() -> MagicMock:
     return app
 
 
+async def _async_noop(*_args, **_kwargs) -> None:
+    """Awaitable no-op — used to monkeypatch the now-async _ingest_and_analyze."""
+    return None
+
+
 @pytest.fixture(autouse=True)
 def reset_scheduler():
     """Tear down the module-level scheduler between tests."""
@@ -91,7 +97,7 @@ async def test_tick_sends_only_for_high_priority(monkeypatch):
     _seed_email("hi1", urgency=7)
     _seed_email("hi2", urgency=9)
 
-    monkeypatch.setattr(push, "_ingest_and_analyze", lambda: None)
+    monkeypatch.setattr(push, "_ingest_and_analyze", _async_noop)
     app = _stub_application()
     sent = await push.tick(app, threshold=4)
 
@@ -107,7 +113,7 @@ async def test_tick_sends_only_for_high_priority(monkeypatch):
 async def test_tick_is_idempotent(monkeypatch):
     monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
     _seed_email("g", urgency=9)
-    monkeypatch.setattr(push, "_ingest_and_analyze", lambda: None)
+    monkeypatch.setattr(push, "_ingest_and_analyze", _async_noop)
     app = _stub_application()
 
     first = await push.tick(app, threshold=4)
@@ -122,7 +128,7 @@ async def test_tick_is_idempotent(monkeypatch):
 async def test_tick_does_not_stamp_when_send_fails(monkeypatch):
     monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
     _seed_email("g", urgency=9)
-    monkeypatch.setattr(push, "_ingest_and_analyze", lambda: None)
+    monkeypatch.setattr(push, "_ingest_and_analyze", _async_noop)
 
     app = MagicMock()
     app.bot.send_message = AsyncMock(side_effect=RuntimeError("network"))
@@ -138,7 +144,7 @@ async def test_tick_does_not_stamp_when_send_fails(monkeypatch):
 async def test_tick_skips_when_chat_id_unset(monkeypatch):
     monkeypatch.delenv("TELEGRAM_AUTHORIZED_CHAT_ID", raising=False)
     _seed_email("g", urgency=9)
-    monkeypatch.setattr(push, "_ingest_and_analyze", lambda: None)
+    monkeypatch.setattr(push, "_ingest_and_analyze", _async_noop)
     app = _stub_application()
 
     sent = await push.tick(app, threshold=4)
@@ -151,7 +157,7 @@ async def test_tick_calls_ingest_and_analyze(monkeypatch):
     monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
     called = {"n": 0}
 
-    def fake_ingest():
+    async def fake_ingest():
         called["n"] += 1
 
     monkeypatch.setattr(push, "_ingest_and_analyze", fake_ingest)
@@ -160,7 +166,8 @@ async def test_tick_calls_ingest_and_analyze(monkeypatch):
     assert called["n"] == 1
 
 
-def test_ingest_and_analyze_persists_and_analyzes(monkeypatch):
+@pytest.mark.asyncio
+async def test_ingest_and_analyze_persists_and_analyzes(monkeypatch):
     monkeypatch.setattr(
         push,
         "gmail_fetch_recent",
@@ -188,21 +195,85 @@ def test_ingest_and_analyze_persists_and_analyzes(monkeypatch):
         },
     )
 
-    push._ingest_and_analyze()
+    await push._ingest_and_analyze()
 
     row = db.get_email_by_gmail_id("ig1")
     assert row is not None
     assert row["urgency_score"] == 6
 
 
-def test_ingest_and_analyze_swallows_gmail_failure(monkeypatch):
+@pytest.mark.asyncio
+async def test_ingest_and_analyze_swallows_gmail_failure(monkeypatch):
     """Gmail outage shouldn't crash the scheduler — log and move on."""
 
     def boom(**_):
         raise RuntimeError("gmail down")
 
     monkeypatch.setattr(push, "gmail_fetch_recent", boom)
-    push._ingest_and_analyze()  # must not raise
+    await push._ingest_and_analyze()  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_ingest_and_analyze_logs_warning_on_transient_dns_error(monkeypatch, caplog):
+    """socket.gaierror (subclass of OSError) → one-line warning, no traceback."""
+    import socket
+
+    def gai_fail(**_):
+        raise socket.gaierror(11001, "getaddrinfo failed")
+
+    monkeypatch.setattr(push, "gmail_fetch_recent", gai_fail)
+    inserted: list = []
+    monkeypatch.setattr(push.db, "insert_email", lambda e: inserted.append(e))
+
+    with caplog.at_level("WARNING", logger="app.telegram.push"):
+        await push._ingest_and_analyze()
+
+    assert inserted == []  # nothing fetched → nothing inserted
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert any("transient" in r.getMessage().lower() for r in warnings)
+    # Critical: no exception-level record (those carry full tracebacks).
+    assert not any(r.exc_info for r in caplog.records if r.levelno >= 40)
+
+
+@pytest.mark.asyncio
+async def test_ingest_and_analyze_keeps_traceback_for_unexpected_errors(monkeypatch, caplog):
+    """A non-network error (e.g. ValueError) must still surface a full traceback."""
+
+    def boom(**_):
+        raise ValueError("something else")
+
+    monkeypatch.setattr(push, "gmail_fetch_recent", boom)
+    with caplog.at_level("ERROR", logger="app.telegram.push"):
+        await push._ingest_and_analyze()
+    errors = [r for r in caplog.records if r.levelno >= 40]
+    assert any(r.exc_info for r in errors), "unexpected error must log traceback"
+
+
+@pytest.mark.asyncio
+async def test_tick_does_not_block_event_loop(monkeypatch):
+    """Concurrent task must make progress while a slow Gmail call is in-flight."""
+    import time
+
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+
+    def slow_fetch(**_):
+        time.sleep(0.5)  # synchronous block — must run in a worker thread
+        return []
+
+    monkeypatch.setattr(push, "gmail_fetch_recent", slow_fetch)
+    app = _stub_application()
+
+    parallel_done = asyncio.Event()
+
+    async def parallel():
+        await asyncio.sleep(0.1)
+        parallel_done.set()
+
+    parallel_task = asyncio.create_task(parallel())
+    await push.tick(app, threshold=4)
+
+    assert parallel_done.is_set(), "loop was blocked by sync gmail call"
+    await parallel_task
 
 
 def test_pause_and_resume_when_not_running():
