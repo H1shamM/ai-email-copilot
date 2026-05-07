@@ -1,0 +1,20 @@
+# Caddy reverse proxy for AI Email Copilot
+#
+# Replace <EIP_DASHED> with the dashed-IPv4 form of the instance's Elastic IP,
+# e.g. 52-49-123-45 for 52.49.123.45. sslip.io resolves *.<dashed-ip>.sslip.io
+# to that IP, so Let's Encrypt can issue a real cert without any DNS setup.
+#
+# Drop this file at /etc/caddy/Caddyfile (after substitution) and run:
+#   sudo systemctl reload caddy
+
+<EIP_DASHED>.sslip.io {
+    reverse_proxy localhost:8000
+    encode zstd gzip
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 10MiB
+            roll_keep 5
+        }
+        format console
+    }
+}
