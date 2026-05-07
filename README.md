@@ -47,7 +47,7 @@ For production, the bot runs on a single AWS EC2 instance behind Caddy/HTTPS at 
 
 Step-by-step CLI runbook: [`docs/AWS_DEPLOY.md`](docs/AWS_DEPLOY.md). Steady-state cost ~$5/month plus Anthropic API charges. Templates for Caddy + systemd live in [`infra/`](infra/).
 
-CI/CD (auto-deploy on `main` push, monitoring) ships in subsequent stories — see issue tracker.
+**CI/CD**: every push to `main` auto-deploys via [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) — GitHub OIDC → AWS STS → SSM `send-command` runs `git checkout <sha> && pip install && systemctl restart copilot`, then smoke-checks `/health`. No long-lived AWS keys, no SSH. Rollback is "Re-run all jobs" on a previous successful run. Setup steps in [`docs/AWS_DEPLOY.md`](docs/AWS_DEPLOY.md) under *CI/CD*.
 
 ## Project Structure
 
