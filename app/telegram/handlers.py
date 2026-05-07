@@ -4,7 +4,7 @@ import logging
 import os
 from functools import wraps
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
@@ -40,6 +40,28 @@ WELCOME = (
     "/resume - start push notifications\n"
     "/help - show this message"
 )
+
+# Telegram convention: lowercase descriptions, ≤ 60 chars to stay readable in
+# the popup. set_my_commands overwrites — re-running on every startup is safe
+# and keeps the list in sync with whatever this module declares.
+COMMANDS: list[BotCommand] = [
+    BotCommand("start", "show welcome message"),
+    BotCommand("help", "show available commands"),
+    BotCommand("unread", "list unread emails from gmail"),
+    BotCommand("analyze", "analyze emails with claude"),
+    BotCommand("inbox", "show recently analyzed emails"),
+    BotCommand("reply", "draft replies — usage: /reply <id>"),
+    BotCommand("pause", "pause push notifications"),
+    BotCommand("resume", "resume push notifications"),
+]
+
+
+async def set_bot_commands(application: Application) -> None:
+    """Register the command list so Telegram shows a popup when the user types /."""
+    try:
+        await application.bot.set_my_commands(COMMANDS)
+    except Exception:  # noqa: BLE001 — non-fatal cosmetic registration; bot still works without it
+        logger.warning("set_my_commands failed; / popup may be empty until next restart")
 
 
 def _is_authorized(chat_id: int | None) -> bool:

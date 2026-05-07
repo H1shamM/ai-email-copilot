@@ -710,6 +710,34 @@ async def test_cb_notify_done_ignores_malformed_callback(monkeypatch, reply_cont
 
 
 @pytest.mark.asyncio
+async def test_set_bot_commands_registers_all_commands():
+    """All 8 user-facing commands must be sent to Telegram's set_my_commands."""
+    application = MagicMock()
+    application.bot.set_my_commands = AsyncMock()
+
+    await handlers.set_bot_commands(application)
+
+    application.bot.set_my_commands.assert_awaited_once()
+    sent = application.bot.set_my_commands.await_args.args[0]
+    names = {c.command for c in sent}
+    assert names == {"start", "help", "unread", "analyze", "inbox", "reply", "pause", "resume"}
+    # Every command needs a non-empty description so the popup row isn't blank.
+    assert all(c.description for c in sent)
+
+
+@pytest.mark.asyncio
+async def test_set_bot_commands_swallows_failure(caplog):
+    """If Telegram is unreachable, startup must continue without crashing."""
+    application = MagicMock()
+    application.bot.set_my_commands = AsyncMock(side_effect=RuntimeError("network"))
+
+    with caplog.at_level("WARNING", logger="app.telegram.handlers"):
+        await handlers.set_bot_commands(application)  # must NOT raise
+
+    assert any("set_my_commands failed" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
 async def test_unread_drops_unauthorized(monkeypatch):
     """The @authorized_only guard still applies to the new handlers."""
     monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
