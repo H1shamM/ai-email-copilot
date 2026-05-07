@@ -183,15 +183,21 @@ Use these instead of writing freehand `gh` commands.
 - **`.github/PULL_REQUEST_TEMPLATE.md`** — Required PR body checklist.
 - **`pyproject.toml`** — black, pytest, coverage, mypy config (single source of truth for tooling thresholds).
 
-## Current status (Week 3 complete; Week 4 next)
+## Current status (Week 3 done; Week 6 deployment in progress)
 
-Week 3 pivoted from web UI to Telegram-only on 2026-04-24 and shipped fully on 2026-05-05:
+Week 3 (Telegram pivot) shipped 2026-05-05; Week 6 (AWS deployment) started 2026-05-07 ahead of Weeks 4–5 (Calendar + Agentic Workflows) so we can dogfood the bot on a real server while building the rest.
 
-- ✅ Story A — Telegram bot scaffolding + webhook + single-user auth (PR #14, 2026-04-30)
-- ✅ Story B — Pull commands `/unread`, `/analyze`, `/inbox` (PR #16, 2026-05-01)
-- ✅ Story C — Draft reply generation + approve-before-send flow (PR #19, 2026-05-05)
-- ✅ Story D — Push notifications for high-priority emails (PR #21, 2026-05-05)
+**Week 3 — complete**
+- ✅ Story A — Telegram scaffolding + webhook + auth (PR #14)
+- ✅ Story B — `/unread`, `/analyze`, `/inbox` (PR #16)
+- ✅ Story C — `/reply` flow with 3 tones + approve-before-send (PR #19)
+- ✅ Story D — Push notifications (PR #21)
 
-**Week 4 (Calendar integration) is up next — see `docs/PRD.md` Week 4 section and break into stories during sprint planning.**
+**Week 6 — in progress**
+- ✅ Story W6-A — EC2 + Caddy + systemd, live at `https://<eip>.nip.io` (PR #29 + Track 1 on 2026-05-07)
+- 🔲 Story W6-B — GitHub Actions auto-deploy on push to main
+- 🔲 Story W6-C — CloudWatch logs + alarms + enriched `/health` + weekly OAuth self-ping
+
+**Weeks 4–5 (Calendar, Agentic) deferred** until Week 6 deployment closes out. Update PROGRESS.md when re-prioritizing.
 
 Detailed plan: `~/.claude/plans/concurrent-napping-crescent.md`.

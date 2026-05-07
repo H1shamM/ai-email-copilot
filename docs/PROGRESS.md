@@ -147,9 +147,62 @@ By end of week, must demonstrate:
 
 ---
 
-## 📋 Week 6: UI & Demo (Apr 26-May 2) - UPCOMING
+## 🔄 Week 6: Deployment to AWS (May 5 onwards) - IN PROGRESS
 
-**Goals:**
+**Pivot:** original "UI & Demo" Week 6 was already covered by Week 3's Telegram pivot. Repurposing Week 6 to ship the bot to AWS so it's no longer tethered to a laptop + cloudflared tunnel.
+
+### Stories
+
+#### Story W6-A: Provision EC2 + first manual deploy
+**Branch:** `feature/aws-deploy-runbook` (Track 2) + manual provisioning (Track 1)
+**Status:** ✅ Complete (PR #29 + Track 1 deploy on 2026-05-07)
+**Size:** M
+**Live at:** `https://79-125-102-15.nip.io/`
+
+**Scope shipped:**
+- t4g.nano EC2 in eu-west-1 with attached EIP, Ubuntu 24.04 LTS arm64, SSM-only access (no SSH)
+- Caddy reverse proxy with auto-TLS via Let's Encrypt, hostname `<eip>.nip.io`
+- systemd unit (`copilot.service`) running uvicorn under a hardened `copilot` system user
+- `GET /health` endpoint returning `{"ok": true}`
+- Full runbook in `docs/AWS_DEPLOY.md` covering provision → bootstrap → smoke test → teardown
+- Templates in `infra/` (`Caddyfile.template`, `copilot.service`)
+
+**Bugs caught during the live deploy** (runbook patched in main):
+1. `b0084fb` — em-dash in SG description rejected by AWS (ASCII-only field)
+2. `a5f0bf7` — Caddyfile placeholder substitution shouldn't be hand-edited; switched to IMDSv2-driven `sed` so the EIP is auto-detected
+3. `5e3059c` — `sslip.io` was rate-limited by Let's Encrypt; switched default hostname to `nip.io`
+
+#### Story W6-B: GitHub Actions auto-deploy on push to main
+**Branch:** `feature/aws-deploy-cd`
+**Status:** 🔲 Not started
+**Size:** M
+**Scope:**
+- `.github/workflows/deploy.yml` triggered on push to `main`
+- SSM `send-command` from Actions runner pulls the repo + restarts `copilot.service`
+- IAM user for CI with minimal `ssm:SendCommand` policy; access keys in repo secrets
+- Rollback story: re-run a previous successful workflow with the older commit SHA
+- README + AWS_DEPLOY.md updated with the CD section
+
+#### Story W6-C: Observability + OAuth health
+**Branch:** `feature/aws-monitoring-oauth-health`
+**Status:** 🔲 Not started
+**Size:** M
+**Scope:**
+- CloudWatch logs agent on instance; systemd unit logs to journald → CloudWatch
+- One alarm: "uvicorn unit not active for 5 min" → email
+- Enrich `/health` with DB connectivity + Telegram `getMe` + Gmail token validity
+- Weekly cron self-pings `/health`; alerts when Gmail OAuth expires (Google revokes Testing-app refresh tokens after 7 idle days)
+- Python root logger configured at INFO so `logger.info(...)` messages reach journald (caught during W6-A: only uvicorn's own INFO lines were visible)
+
+**Cost target:** ~$5/mo steady-state plus Anthropic API charges.
+
+---
+
+## 📋 Week 6 (original): UI & Demo - SUPERSEDED
+
+Original goals (production UI + demo video + elevator pitch) were absorbed into Week 3's Telegram pivot. This slot is now Week 6 = Deployment.
+
+**Goals (legacy reference):**
 - Production-ready UI
 - Demo video
 - Elevator pitch
