@@ -35,7 +35,7 @@ $env:INSTANCE_NAME = "email-copilot"
 $env:IAM_ROLE_NAME = "copilot-ssm"
 $env:IAM_PROFILE_NAME = "copilot-ssm"
 $env:SG_NAME = "copilot-sg"
-$env:SG_DESC = "AI Email Copilot — 443 in, SSM for shell"
+$env:SG_DESC = "AI Email Copilot - 443 in, SSM for shell"  # ASCII only — AWS rejects non-ASCII in SG descriptions
 $env:EIP_TAG = "copilot-eip"
 $env:S3_BOOTSTRAP_BUCKET = "copilot-bootstrap-$(Get-Random -Minimum 100000 -Maximum 999999)"
 ```
