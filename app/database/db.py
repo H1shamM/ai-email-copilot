@@ -68,6 +68,7 @@ def init_db():
             duration_minutes INTEGER,
             participants TEXT,
             location TEXT,
+            status TEXT NOT NULL DEFAULT 'detected',
             created_at TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (email_id) REFERENCES emails(id)
         );
@@ -106,6 +107,14 @@ def init_db():
     email_cols = {r["name"] for r in conn.execute("PRAGMA table_info(emails)").fetchall()}
     if "notified_at" not in email_cols:
         conn.execute("ALTER TABLE emails ADD COLUMN notified_at TEXT")
+        conn.commit()
+
+    # Backfill calendar_events.status for DBs created before Week 4 Story A.
+    cal_cols = {r["name"] for r in conn.execute("PRAGMA table_info(calendar_events)").fetchall()}
+    if "status" not in cal_cols:
+        conn.execute(
+            "ALTER TABLE calendar_events ADD COLUMN status TEXT NOT NULL DEFAULT 'detected'"
+        )
         conn.commit()
 
     # Indexes — safe now that every referenced column exists.
@@ -329,6 +338,92 @@ def update_draft_status(
             conn.execute(
                 "UPDATE draft_replies SET status = ? WHERE id = ?",
                 (status, draft_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+CALENDAR_EVENT_STATUSES = {"detected", "created", "failed", "skipped"}
+
+
+def insert_calendar_event(
+    email_id: int,
+    title: str,
+    *,
+    event_date: str | None = None,
+    event_time: str | None = None,
+    duration_minutes: int | None = None,
+    participants: str | None = None,
+    location: str | None = None,
+    google_event_id: str | None = None,
+    status: str = "detected",
+) -> int:
+    """Persist a detected/created calendar event linked to an email; returns row id."""
+    if status not in CALENDAR_EVENT_STATUSES:
+        raise ValueError(
+            f"Invalid calendar event status {status!r}; allowed: {sorted(CALENDAR_EVENT_STATUSES)}"
+        )
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            """INSERT INTO calendar_events
+               (email_id, title, event_date, event_time, duration_minutes,
+                participants, location, google_event_id, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                email_id,
+                title,
+                event_date,
+                event_time,
+                duration_minutes,
+                participants,
+                location,
+                google_event_id,
+                status,
+            ),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def get_calendar_event_by_email(email_id: int) -> list[dict]:
+    """Return every calendar event linked to an email, newest first."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM calendar_events WHERE email_id = ? ORDER BY id DESC",
+            (email_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def update_calendar_event_status(
+    event_row_id: int,
+    status: str,
+    *,
+    google_event_id: str | None = None,
+) -> None:
+    """Transition a calendar event row to a new status; optionally stamp google_event_id."""
+    if status not in CALENDAR_EVENT_STATUSES:
+        raise ValueError(
+            f"Invalid calendar event status {status!r}; allowed: {sorted(CALENDAR_EVENT_STATUSES)}"
+        )
+    conn = get_connection()
+    try:
+        if google_event_id is not None:
+            conn.execute(
+                "UPDATE calendar_events SET status = ?, google_event_id = ? WHERE id = ?",
+                (status, google_event_id, event_row_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE calendar_events SET status = ? WHERE id = ?",
+                (status, event_row_id),
             )
         conn.commit()
     finally:
