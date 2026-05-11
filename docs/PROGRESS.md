@@ -115,19 +115,25 @@ By end of week, must demonstrate:
 
 ---
 
-## 📋 Week 4: External Data + Knowledge (Apr 12-18) - UPCOMING
+## 🔄 Week 4: Calendar Integration (started 2026-05-10) - IN PROGRESS
 
-**Goals:**
-- Calendar integration
-- Meeting detection
-- Event creation
+**Pivot back from Week 6:** with AWS deploy + auto-deploy live, returning to feature work. Week 4 PRD-aligned scope (Feature 5 — Google Calendar) ahead of Week 5 (Agentic).
 
-**High-Level Tasks:**
-1. Google Calendar API integration
-2. Meeting detection with Claude
-3. Natural language date parsing
-4. Calendar event creation
-5. UI for calendar features
+### Stories
+- 🔄 **Story W4-A** ([#34](https://github.com/H1shamM/ai-email-copilot/issues/34)) — Calendar OAuth scope + `app/calendar/service.py` wrappers + `calendar_events.status` migration + DB helpers
+- 🔲 **Story W4-B** — Meeting detection from email body (Claude-driven NL date resolution)
+- 🔲 **Story W4-C** — Telegram `/schedule` flow with approve-before-create + free/busy conflict check
+
+### Re-auth required after Story W4-A merges
+
+Adding `https://www.googleapis.com/auth/calendar` to `SCOPES` invalidates any existing `token.pickle`. After pulling the merged change:
+
+```powershell
+Remove-Item token.pickle -ErrorAction SilentlyContinue
+.venv/Scripts/python -c "from app.gmail.auth import get_credentials; get_credentials()"
+```
+
+The browser flow now lists Calendar alongside the Gmail scopes — grant it. Subsequent runs reuse the refreshed token transparently.
 
 ---
 

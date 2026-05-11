@@ -277,3 +277,144 @@ def test_get_or_create_telegram_user_bumps_last_seen():
     assert second["last_seen_at"] >= first["last_seen_at"]
     # created_at must NOT change on a re-call
     assert first["created_at"] == second["created_at"]
+
+
+def test_insert_calendar_event_round_trips():
+    email_row = _make_email("cal_one")
+    event_row = db.insert_calendar_event(
+        email_row,
+        "Sync with Alice",
+        event_date="2026-05-12",
+        event_time="14:00",
+        duration_minutes=30,
+        participants="alice@example.com",
+        location="Zoom",
+    )
+    events = db.get_calendar_event_by_email(email_row)
+    assert len(events) == 1
+    e = events[0]
+    assert e["id"] == event_row
+    assert e["title"] == "Sync with Alice"
+    assert e["event_date"] == "2026-05-12"
+    assert e["duration_minutes"] == 30
+    assert e["participants"] == "alice@example.com"
+    assert e["location"] == "Zoom"
+    assert e["status"] == "detected"
+    assert e["google_event_id"] is None
+
+
+def test_get_calendar_event_by_email_returns_newest_first():
+    email_row = _make_email("cal_multi")
+    db.insert_calendar_event(email_row, "First detection")
+    db.insert_calendar_event(email_row, "Second detection")
+    events = db.get_calendar_event_by_email(email_row)
+    assert [e["title"] for e in events] == ["Second detection", "First detection"]
+
+
+def test_get_calendar_event_by_email_empty_when_none_exist():
+    email_row = _make_email("cal_none")
+    assert db.get_calendar_event_by_email(email_row) == []
+
+
+def test_update_calendar_event_status_stamps_google_event_id():
+    email_row = _make_email("cal_create")
+    event_row = db.insert_calendar_event(email_row, "Quick chat")
+    db.update_calendar_event_status(event_row, "created", google_event_id="goog_evt_42")
+    after = db.get_calendar_event_by_email(email_row)[0]
+    assert after["status"] == "created"
+    assert after["google_event_id"] == "goog_evt_42"
+
+
+def test_update_calendar_event_status_without_google_id_leaves_it():
+    email_row = _make_email("cal_skip")
+    event_row = db.insert_calendar_event(email_row, "Maybe meeting", google_event_id="prev")
+    db.update_calendar_event_status(event_row, "skipped")
+    after = db.get_calendar_event_by_email(email_row)[0]
+    assert after["status"] == "skipped"
+    assert after["google_event_id"] == "prev"
+
+
+def test_insert_calendar_event_rejects_unknown_status():
+    email_row = _make_email("cal_bad")
+    with pytest.raises(ValueError, match="Invalid calendar event status"):
+        db.insert_calendar_event(email_row, "x", status="confused")
+
+
+def test_update_calendar_event_status_rejects_unknown_status():
+    email_row = _make_email("cal_bad2")
+    event_row = db.insert_calendar_event(email_row, "x")
+    with pytest.raises(ValueError, match="Invalid calendar event status"):
+        db.update_calendar_event_status(event_row, "definitely-not-real")
+
+
+def test_init_db_backfills_calendar_events_status(monkeypatch):
+    """A DB created before Week 4 (calendar_events with no status column) must
+    migrate cleanly when init_db runs again."""
+    fd, legacy_path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        legacy = sqlite3.connect(legacy_path)
+        legacy.executescript("""
+            CREATE TABLE emails (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                gmail_message_id TEXT UNIQUE NOT NULL,
+                thread_id TEXT,
+                sender TEXT NOT NULL,
+                subject TEXT,
+                body TEXT,
+                snippet TEXT,
+                received_date TEXT,
+                ai_summary TEXT,
+                category TEXT,
+                sentiment TEXT,
+                action_required TEXT,
+                urgency_score INTEGER,
+                is_read INTEGER DEFAULT 0,
+                is_archived INTEGER DEFAULT 0,
+                is_starred INTEGER DEFAULT 0,
+                processed_at TEXT,
+                notified_at TEXT,
+                created_at TEXT
+            );
+            CREATE TABLE draft_replies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email_id INTEGER NOT NULL,
+                tone TEXT NOT NULL,
+                draft_text TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                was_sent INTEGER DEFAULT 0,
+                sent_at TEXT,
+                created_at TEXT
+            );
+            CREATE TABLE calendar_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email_id INTEGER NOT NULL,
+                google_event_id TEXT,
+                title TEXT NOT NULL,
+                event_date TEXT,
+                event_time TEXT,
+                duration_minutes INTEGER,
+                participants TEXT,
+                location TEXT,
+                created_at TEXT,
+                FOREIGN KEY (email_id) REFERENCES emails(id)
+            );
+            """)
+        legacy.commit()
+        legacy.close()
+
+        monkeypatch.setenv("DATABASE_PATH", legacy_path)
+        reloaded = importlib.reload(db)
+        reloaded.init_db()
+
+        check = reloaded.get_connection()
+        try:
+            cols = {r["name"] for r in check.execute("PRAGMA table_info(calendar_events)")}
+        finally:
+            check.close()
+        assert "status" in cols
+    finally:
+        try:
+            os.unlink(legacy_path)
+        except PermissionError:
+            pass
