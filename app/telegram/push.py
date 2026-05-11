@@ -21,6 +21,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 
 from app.ai.analyzer import analyze_email
+from app.ai.meeting_detector import maybe_detect_meeting
 from app.database import db
 from app.gmail.service import get_recent_emails as gmail_fetch_recent
 from app.telegram.formatting import chunk_messages, format_notification
@@ -146,6 +147,7 @@ async def _ingest_and_analyze() -> None:
             continue
         if analysis:
             await asyncio.to_thread(db.update_analysis, em["gmail_message_id"], analysis)
+            await asyncio.to_thread(maybe_detect_meeting, em, analysis)
 
 
 def _authorized_chat_id() -> int | None:
