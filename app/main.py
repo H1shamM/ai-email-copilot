@@ -9,6 +9,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request  # noqa: E402
 
 from app.gmail.service import get_recent_emails  # noqa: E402
 from app.ai.analyzer import analyze_email  # noqa: E402
+from app.ai.meeting_detector import maybe_detect_meeting  # noqa: E402
 from app.database import db  # noqa: E402
 from app.telegram import bot as telegram_bot  # noqa: E402
 from app.telegram import handlers as telegram_handlers  # noqa: E402
@@ -121,6 +122,7 @@ def analyze_stored_emails():
         analysis = analyze_email(email)
         if analysis:
             db.update_analysis(email["gmail_message_id"], analysis)
+            maybe_detect_meeting(email, analysis)
             results.append(
                 {
                     "gmail_message_id": email["gmail_message_id"],

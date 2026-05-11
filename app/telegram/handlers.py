@@ -9,6 +9,7 @@ from telegram.constants import ChatAction, ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from app.ai.analyzer import analyze_email
+from app.ai.meeting_detector import maybe_detect_meeting
 from app.ai.reply_generator import generate_replies, regenerate_one
 from app.database import db
 from app.gmail.service import get_recent_emails as gmail_fetch_recent
@@ -166,6 +167,7 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             continue
         db.update_analysis(email["gmail_message_id"], analysis)
+        maybe_detect_meeting(email, analysis)
         blocks.append(format_analysis_entry(email, analysis))
 
     if blocks:
