@@ -11,6 +11,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 from app.ai.analyzer import analyze_email
 from app.ai.meeting_detector import maybe_detect_meeting
 from app.ai.reply_generator import generate_replies, regenerate_one
+from app.calendar import scheduler
 from app.database import db
 from app.gmail.service import get_recent_emails as gmail_fetch_recent
 from app.gmail.service import send_reply as gmail_send_reply
@@ -37,6 +38,7 @@ WELCOME = (
     "/analyze - run AI analysis on unprocessed emails\n"
     "/inbox - show last analyzed emails\n"
     "/reply <id> - draft a reply to an email\n"
+    "/schedule - create calendar events from detected meetings\n"
     "/pause - stop push notifications\n"
     "/resume - start push notifications\n"
     "/help - show this message"
@@ -52,6 +54,7 @@ COMMANDS: list[BotCommand] = [
     BotCommand("analyze", "analyze emails with claude"),
     BotCommand("inbox", "show recently analyzed emails"),
     BotCommand("reply", "draft replies — usage: /reply <id>"),
+    BotCommand("schedule", "create calendar events from detected meetings"),
     BotCommand("pause", "pause push notifications"),
     BotCommand("resume", "resume push notifications"),
 ]
@@ -446,6 +449,105 @@ async def resume_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text("🔔 Notifications resumed.")
 
 
+def _format_schedule_entry(event: dict) -> str:
+    """Plain-text summary of a detected event for the /schedule list."""
+    lines = [f"#{event['id']} · {event.get('title') or 'Untitled meeting'}"]
+    lines.append(f"🗓 {event.get('event_date')} {event.get('event_time')}")
+    duration = event.get("duration_minutes") or scheduler.DEFAULT_DURATION_MINUTES
+    lines.append(f"⏱ {duration} min")
+    if event.get("participants"):
+        lines.append(f"👥 {event['participants']}")
+    if event.get("location"):
+        lines.append(f"📍 {event['location']}")
+    return "\n".join(lines)
+
+
+def _build_schedule_keyboard(event_id: int) -> InlineKeyboardMarkup:
+    """Create/Skip keyboard for one detected event."""
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ Create", callback_data=f"s:create:{event_id}"),
+                InlineKeyboardButton("⏭ Skip", callback_data=f"s:skip:{event_id}"),
+            ]
+        ]
+    )
+
+
+@authorized_only
+async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """`/schedule` — list detected meetings with a concrete date+time to create."""
+    chat = update.effective_chat
+    events = db.get_calendar_events_by_status("detected")
+    schedulable = [e for e in events if e.get("event_date") and e.get("event_time")]
+    if not schedulable:
+        await chat.send_message("No meetings to schedule.")
+        return
+    for event in schedulable:
+        await chat.send_message(
+            _format_schedule_entry(event),
+            reply_markup=_build_schedule_keyboard(event["id"]),
+        )
+
+
+@authorized_only
+async def cb_schedule_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Create button — block on freebusy conflict, else insert + mark created."""
+    query = update.callback_query
+    await query.answer("Checking…")
+    parsed = _parse_callback(query.data or "", prefix="s")
+    if parsed is None or parsed[0] != "create":
+        return
+    _, event_id = parsed
+    event = db.get_calendar_event_by_id(event_id)
+    if event is None:
+        await update.effective_chat.send_message("That event no longer exists.")
+        return
+    if event["status"] in ("created", "skipped"):
+        await update.effective_chat.send_message(f"Event already {event['status']}.")
+        return
+
+    if scheduler.has_conflict(event):
+        await update.effective_chat.send_message(
+            "⚠ Conflicts with an existing calendar event — not created. "
+            "Tap Skip, or free up the slot and try again."
+        )
+        return
+
+    try:
+        google_event_id = scheduler.create_event(event)
+    except Exception as exc:  # noqa: BLE001 — surface a generic failure to the user
+        logger.exception("Calendar insert failed for event=%s", event_id)
+        db.update_calendar_event_status(event_id, "failed")
+        await update.effective_chat.send_message(f"Create failed: {exc}")
+        return
+
+    db.update_calendar_event_status(event_id, "created", google_event_id=google_event_id)
+    await update.effective_chat.send_message(
+        f"✅ Event created: {event.get('title') or 'meeting'}."
+    )
+
+
+@authorized_only
+async def cb_schedule_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Skip button — mark the detected event skipped, no Calendar call."""
+    query = update.callback_query
+    await query.answer("Skipped")
+    parsed = _parse_callback(query.data or "", prefix="s")
+    if parsed is None or parsed[0] != "skip":
+        return
+    _, event_id = parsed
+    event = db.get_calendar_event_by_id(event_id)
+    if event is None:
+        await update.effective_chat.send_message("That event no longer exists.")
+        return
+    if event["status"] in ("created", "skipped"):
+        await update.effective_chat.send_message(f"Event already {event['status']}.")
+        return
+    db.update_calendar_event_status(event_id, "skipped")
+    await update.effective_chat.send_message("⏭ Skipped.")
+
+
 def register(application: Application) -> None:
     """Register all command handlers on the given Application."""
     application.add_handler(CommandHandler("start", start))
@@ -454,6 +556,7 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("analyze", analyze))
     application.add_handler(CommandHandler("inbox", inbox))
     application.add_handler(CommandHandler("reply", reply_command))
+    application.add_handler(CommandHandler("schedule", schedule_command))
     application.add_handler(CommandHandler("pause", pause_command))
     application.add_handler(CommandHandler("resume", resume_command))
 
@@ -465,3 +568,5 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(cb_regenerate, pattern=r"^r:regen:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_notify_reply, pattern=r"^n:reply:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_notify_done, pattern=r"^n:done:\d+$"))
+    application.add_handler(CallbackQueryHandler(cb_schedule_create, pattern=r"^s:create:\d+$"))
+    application.add_handler(CallbackQueryHandler(cb_schedule_skip, pattern=r"^s:skip:\d+$"))

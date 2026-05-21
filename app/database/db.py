@@ -402,6 +402,36 @@ def get_calendar_event_by_email(email_id: int) -> list[dict]:
         conn.close()
 
 
+def get_calendar_event_by_id(event_row_id: int) -> dict | None:
+    """Return a single calendar event row by its id, or None if it doesn't exist."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM calendar_events WHERE id = ?",
+            (event_row_id,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_calendar_events_by_status(status: str) -> list[dict]:
+    """Return all calendar events in a given status, ordered by event date/time then id."""
+    if status not in CALENDAR_EVENT_STATUSES:
+        raise ValueError(
+            f"Invalid calendar event status {status!r}; allowed: {sorted(CALENDAR_EVENT_STATUSES)}"
+        )
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM calendar_events WHERE status = ? ORDER BY event_date, event_time, id",
+            (status,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
 def update_calendar_event_status(
     event_row_id: int,
     status: str,

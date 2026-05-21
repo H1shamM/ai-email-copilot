@@ -347,6 +347,37 @@ def test_update_calendar_event_status_rejects_unknown_status():
         db.update_calendar_event_status(event_row, "definitely-not-real")
 
 
+def test_get_calendar_event_by_id_round_trips():
+    email_row = _make_email("cal_by_id")
+    event_row = db.insert_calendar_event(email_row, "Standup", event_date="2026-06-01")
+    got = db.get_calendar_event_by_id(event_row)
+    assert got is not None
+    assert got["id"] == event_row
+    assert got["title"] == "Standup"
+
+
+def test_get_calendar_event_by_id_returns_none_when_missing():
+    assert db.get_calendar_event_by_id(99999) is None
+
+
+def test_get_calendar_events_by_status_filters_and_orders():
+    email_row = _make_email("cal_by_status")
+    db.insert_calendar_event(email_row, "Later", event_date="2026-06-02", event_time="09:00")
+    db.insert_calendar_event(email_row, "Earlier", event_date="2026-06-01", event_time="09:00")
+    created_row = db.insert_calendar_event(email_row, "Already done")
+    db.update_calendar_event_status(created_row, "created", google_event_id="g1")
+
+    detected = db.get_calendar_events_by_status("detected")
+    assert [e["title"] for e in detected] == ["Earlier", "Later"]
+    created = db.get_calendar_events_by_status("created")
+    assert [e["title"] for e in created] == ["Already done"]
+
+
+def test_get_calendar_events_by_status_rejects_unknown_status():
+    with pytest.raises(ValueError, match="Invalid calendar event status"):
+        db.get_calendar_events_by_status("nonsense")
+
+
 def test_init_db_backfills_calendar_events_status(monkeypatch):
     """A DB created before Week 4 (calendar_events with no status column) must
     migrate cleanly when init_db runs again."""
