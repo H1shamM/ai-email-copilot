@@ -115,13 +115,13 @@ By end of week, must demonstrate:
 
 ---
 
-## 🔄 Week 4: Calendar Integration (started 2026-05-10) - IN PROGRESS
+## ✅ Week 4: Calendar Integration (May 10–21) - COMPLETE
 
 **Pivot back from Week 6:** with AWS deploy + auto-deploy live, returning to feature work. Week 4 PRD-aligned scope (Feature 5 — Google Calendar) ahead of Week 5 (Agentic).
 
 ### Stories
 - ✅ **Story W4-A** ([#34](https://github.com/H1shamM/ai-email-copilot/issues/34) / PR [#35](https://github.com/H1shamM/ai-email-copilot/pull/35)) — Calendar OAuth scope + `app/calendar/service.py` wrappers + `calendar_events.status` migration + DB helpers
-- 🔄 **Story W4-B** ([#36](https://github.com/H1shamM/ai-email-copilot/issues/36)) — Meeting detection from email body (Claude-driven NL date resolution) + idempotent persistence into `calendar_events`
+- ✅ **Story W4-B** ([#36](https://github.com/H1shamM/ai-email-copilot/issues/36) / PR [#37](https://github.com/H1shamM/ai-email-copilot/pull/37)) — Meeting detection from email body (Claude-driven NL date resolution) + idempotent persistence into `calendar_events`
 - ✅ **Story W4-C** ([#38](https://github.com/H1shamM/ai-email-copilot/issues/38) / PR [#39](https://github.com/H1shamM/ai-email-copilot/pull/39)) — Telegram `/schedule` flow (list-only) with approve-before-create + block-on-conflict free/busy check; new `app/calendar/scheduler.py` orchestration
 
 ### Re-auth required after Story W4-A merges
