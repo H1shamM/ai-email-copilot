@@ -8,6 +8,7 @@ from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Upd
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
+from app.ai import agent
 from app.ai.analyzer import analyze_email
 from app.ai.meeting_detector import maybe_detect_meeting
 from app.ai.reply_generator import generate_replies, regenerate_one
@@ -39,6 +40,7 @@ WELCOME = (
     "/inbox - show last analyzed emails\n"
     "/reply <id> - draft a reply to an email\n"
     "/schedule - create calendar events from detected meetings\n"
+    "/agent <text> - run a natural-language request through the agent\n"
     "/pause - stop push notifications\n"
     "/resume - start push notifications\n"
     "/help - show this message"
@@ -55,6 +57,7 @@ COMMANDS: list[BotCommand] = [
     BotCommand("inbox", "show recently analyzed emails"),
     BotCommand("reply", "draft replies — usage: /reply <id>"),
     BotCommand("schedule", "create calendar events from detected meetings"),
+    BotCommand("agent", "run a natural-language request through the agent"),
     BotCommand("pause", "pause push notifications"),
     BotCommand("resume", "resume push notifications"),
 ]
@@ -548,6 +551,73 @@ async def cb_schedule_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.effective_chat.send_message("⏭ Skipped.")
 
 
+@authorized_only
+async def agent_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """`/agent <instruction>` — run a natural-language request through the agent."""
+    chat = update.effective_chat
+    instruction = " ".join(context.args or []).strip()
+    if not instruction:
+        await chat.send_message("Usage: /agent <what you want done>")
+        return
+
+    await _typing(update)
+    await chat.send_message("🤖 Working on it…")
+    await _typing(update)
+    try:
+        text, pending = agent.run_agent(instruction)
+    except Exception as exc:  # noqa: BLE001 — surface a generic failure to the user
+        logger.exception("Agent run failed")
+        await chat.send_message(f"Agent failed: {exc}")
+        return
+
+    if not pending:
+        await chat.send_message(text or "Done — nothing to do.")
+        return
+
+    context.user_data["agent_pending"] = pending
+    lines = ["Proposed actions (approve to run):"]
+    lines += [f"{i}. {agent.describe_action(a)}" for i, a in enumerate(pending, 1)]
+    if text:
+        lines += ["", text]
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ Approve", callback_data="a:approve"),
+                InlineKeyboardButton("✖ Cancel", callback_data="a:cancel"),
+            ]
+        ]
+    )
+    await chat.send_message("\n".join(lines), reply_markup=keyboard)
+
+
+@authorized_only
+async def cb_agent_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Approve — execute every queued agent action in order, report each result."""
+    query = update.callback_query
+    await query.answer("Running…")
+    pending = context.user_data.pop("agent_pending", None)
+    if not pending:
+        await update.effective_chat.send_message("No pending actions.")
+        return
+    results = []
+    for action in pending:
+        try:
+            results.append(f"✅ {agent.execute_action(action)}")
+        except Exception as exc:  # noqa: BLE001 — one failure shouldn't abort the rest
+            logger.exception("Agent action failed: %s", action.get("name"))
+            results.append(f"⚠ {action.get('name')} failed: {exc}")
+    await update.effective_chat.send_message("\n".join(results))
+
+
+@authorized_only
+async def cb_agent_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cancel — discard the queued agent actions without running anything."""
+    query = update.callback_query
+    await query.answer("Cancelled")
+    context.user_data.pop("agent_pending", None)
+    await update.effective_chat.send_message("✖ Cancelled — nothing was done.")
+
+
 def register(application: Application) -> None:
     """Register all command handlers on the given Application."""
     application.add_handler(CommandHandler("start", start))
@@ -557,6 +627,7 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("inbox", inbox))
     application.add_handler(CommandHandler("reply", reply_command))
     application.add_handler(CommandHandler("schedule", schedule_command))
+    application.add_handler(CommandHandler("agent", agent_command))
     application.add_handler(CommandHandler("pause", pause_command))
     application.add_handler(CommandHandler("resume", resume_command))
 
@@ -570,3 +641,5 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(cb_notify_done, pattern=r"^n:done:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_schedule_create, pattern=r"^s:create:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_schedule_skip, pattern=r"^s:skip:\d+$"))
+    application.add_handler(CallbackQueryHandler(cb_agent_approve, pattern=r"^a:approve$"))
+    application.add_handler(CallbackQueryHandler(cb_agent_cancel, pattern=r"^a:cancel$"))

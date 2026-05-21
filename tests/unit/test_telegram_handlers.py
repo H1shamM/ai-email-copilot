@@ -728,6 +728,7 @@ async def test_set_bot_commands_registers_all_commands():
         "inbox",
         "reply",
         "schedule",
+        "agent",
         "pause",
         "resume",
     }
@@ -925,3 +926,100 @@ async def test_cb_schedule_skip_marks_skipped(monkeypatch, reply_context):
 
     assert status_calls == [(3, "skipped", {})]
     assert "Skipped" in update.effective_chat.send_message.await_args_list[-1].args[0]
+
+
+@pytest.mark.asyncio
+async def test_agent_command_empty_instruction_shows_usage(authorized_update, reply_context):
+    reply_context.args = []
+    await handlers.agent_command(authorized_update, reply_context)
+    assert "Usage: /agent" in _all_reply_texts(authorized_update)
+
+
+@pytest.mark.asyncio
+async def test_agent_command_text_only_no_pending(monkeypatch, authorized_update, reply_context):
+    monkeypatch.setattr(handlers.agent, "run_agent", lambda instr: ("Here is your summary.", []))
+    reply_context.args = ["summarize", "my", "unread"]
+    await handlers.agent_command(authorized_update, reply_context)
+
+    assert "Here is your summary." in _all_reply_texts(authorized_update)
+    assert "agent_pending" not in reply_context.user_data
+
+
+@pytest.mark.asyncio
+async def test_agent_command_with_pending_shows_keyboard_and_stores(
+    monkeypatch, authorized_update, reply_context
+):
+    pending = [{"name": "send_reply", "input": {"email_id": 5, "body": "Yes"}}]
+    monkeypatch.setattr(handlers.agent, "run_agent", lambda instr: ("Proposed.", pending))
+    monkeypatch.setattr(handlers.agent, "describe_action", lambda a: "Send reply to email 5")
+    reply_context.args = ["reply", "to", "5"]
+    await handlers.agent_command(authorized_update, reply_context)
+
+    assert reply_context.user_data["agent_pending"] == pending
+    calls = authorized_update.effective_chat.send_message.await_args_list
+    assert any("reply_markup" in c.kwargs for c in calls)
+    assert "Proposed actions" in _all_reply_texts(authorized_update)
+
+
+@pytest.mark.asyncio
+async def test_agent_command_handles_run_failure(monkeypatch, authorized_update, reply_context):
+    def boom(_):
+        raise RuntimeError("api down")
+
+    monkeypatch.setattr(handlers.agent, "run_agent", boom)
+    reply_context.args = ["do", "stuff"]
+    await handlers.agent_command(authorized_update, reply_context)
+    assert "Agent failed" in _all_reply_texts(authorized_update)
+
+
+@pytest.mark.asyncio
+async def test_cb_agent_approve_executes_queued_actions(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    executed: list = []
+    monkeypatch.setattr(handlers.agent, "execute_action", lambda a: executed.append(a) or "did it")
+    reply_context.user_data = {
+        "agent_pending": [{"name": "send_reply", "input": {"email_id": 5, "body": "Yes"}}]
+    }
+    update = _make_callback_update("a:approve")
+    await handlers.cb_agent_approve(update, reply_context)
+
+    assert executed == [{"name": "send_reply", "input": {"email_id": 5, "body": "Yes"}}]
+    assert "did it" in update.effective_chat.send_message.await_args_list[-1].args[0]
+    assert "agent_pending" not in reply_context.user_data
+
+
+@pytest.mark.asyncio
+async def test_cb_agent_approve_no_pending(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    reply_context.user_data = {}
+    update = _make_callback_update("a:approve")
+    await handlers.cb_agent_approve(update, reply_context)
+    assert "No pending actions" in update.effective_chat.send_message.await_args_list[-1].args[0]
+
+
+@pytest.mark.asyncio
+async def test_cb_agent_approve_reports_action_failure(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+
+    def boom(_):
+        raise RuntimeError("send fail")
+
+    monkeypatch.setattr(handlers.agent, "execute_action", boom)
+    reply_context.user_data = {"agent_pending": [{"name": "send_reply", "input": {}}]}
+    update = _make_callback_update("a:approve")
+    await handlers.cb_agent_approve(update, reply_context)
+    assert "failed" in update.effective_chat.send_message.await_args_list[-1].args[0]
+
+
+@pytest.mark.asyncio
+async def test_cb_agent_cancel_discards(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    reply_context.user_data = {"agent_pending": [{"name": "send_reply", "input": {}}]}
+    update = _make_callback_update("a:cancel")
+    await handlers.cb_agent_cancel(update, reply_context)
+    assert "agent_pending" not in reply_context.user_data
+    assert "Cancelled" in update.effective_chat.send_message.await_args_list[-1].args[0]
