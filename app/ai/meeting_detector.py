@@ -6,17 +6,19 @@ idempotent so the same email can be re-analyzed without duplicating rows.
 """
 
 import json
+import logging
 import os
 
 from anthropic import Anthropic
 
+from app.ai import MODEL
 from app.database import db
+
+logger = logging.getLogger(__name__)
 
 _client = None
 
 CONFIDENCE_THRESHOLD = 0.6
-
-MEETING_MODEL = "claude-sonnet-4-20250514"
 
 MEETING_PROMPT = """Extract meeting/event details from this email and respond with JSON.
 
@@ -62,7 +64,7 @@ def detect_meeting(email_data: dict) -> dict | None:
 
     try:
         message = _get_client().messages.create(
-            model=MEETING_MODEL,
+            model=MODEL,
             max_tokens=1000,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -77,10 +79,10 @@ def detect_meeting(email_data: dict) -> dict | None:
 
         parsed = json.loads(response_text)
     except json.JSONDecodeError as e:
-        print(f"Failed to parse meeting JSON: {e}")
+        logger.warning("Failed to parse meeting JSON: %s", e)
         return None
-    except Exception as e:
-        print(f"Claude API error in detect_meeting: {e}")
+    except Exception:
+        logger.exception("Claude API error in detect_meeting")
         return None
 
     participants = parsed.get("participants") or []

@@ -234,7 +234,12 @@ def run_agent(instruction: str) -> tuple[str, list[dict]]:
         response = client.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
+            # One breakpoint on system caches tools + system together (render order
+            # is tools -> system -> messages), so every round and back-to-back
+            # request re-reads the stable prefix instead of reprocessing it.
+            system=[
+                {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}
+            ],
             tools=TOOLS,
             messages=messages,
         )

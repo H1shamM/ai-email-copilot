@@ -1,5 +1,6 @@
 """Telegram bot command handlers + single-user auth guard."""
 
+import asyncio
 import logging
 import os
 from functools import wraps
@@ -165,7 +166,7 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     blocks: list[str] = []
     for email in pending:
         await _typing(update)
-        analysis = analyze_email(email)
+        analysis = await asyncio.to_thread(analyze_email, email)
         if not analysis:
             blocks.append(
                 f"⚠️ *\\#{email.get('id', '?')}* "
@@ -173,7 +174,7 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             continue
         db.update_analysis(email["gmail_message_id"], analysis)
-        maybe_detect_meeting(email, analysis)
+        await asyncio.to_thread(maybe_detect_meeting, email, analysis)
         blocks.append(format_analysis_entry(email, analysis))
 
     if blocks:
@@ -239,7 +240,7 @@ async def _run_reply_flow(update: Update, email_id: int) -> None:
     await _typing(update)
     await chat.send_message("✍️ Drafting 3 replies… ~10s.")
     await _typing(update)
-    replies = generate_replies(email)
+    replies = await asyncio.to_thread(generate_replies, email)
     if not replies:
         await chat.send_message("Couldn't draft replies — try again in a moment.")
         return
@@ -399,7 +400,7 @@ async def cb_regenerate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     await _typing(update)
-    new_text = regenerate_one(email, draft["tone"])
+    new_text = await asyncio.to_thread(regenerate_one, email, draft["tone"])
     if not new_text:
         await update.effective_chat.send_message(f"Regenerate failed for {draft['tone']}.")
         return
@@ -564,7 +565,7 @@ async def agent_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await chat.send_message("🤖 Working on it…")
     await _typing(update)
     try:
-        text, pending = agent.run_agent(instruction)
+        text, pending = await asyncio.to_thread(agent.run_agent, instruction)
     except Exception as exc:  # noqa: BLE001 — surface a generic failure to the user
         logger.exception("Agent run failed")
         await chat.send_message(f"Agent failed: {exc}")
