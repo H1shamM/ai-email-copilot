@@ -122,7 +122,7 @@ By end of week, must demonstrate:
 ### Stories
 - ✅ **Story W4-A** ([#34](https://github.com/H1shamM/ai-email-copilot/issues/34) / PR [#35](https://github.com/H1shamM/ai-email-copilot/pull/35)) — Calendar OAuth scope + `app/calendar/service.py` wrappers + `calendar_events.status` migration + DB helpers
 - 🔄 **Story W4-B** ([#36](https://github.com/H1shamM/ai-email-copilot/issues/36)) — Meeting detection from email body (Claude-driven NL date resolution) + idempotent persistence into `calendar_events`
-- 🔲 **Story W4-C** — Telegram `/schedule` flow with approve-before-create + free/busy conflict check
+- ✅ **Story W4-C** ([#38](https://github.com/H1shamM/ai-email-copilot/issues/38) / PR [#39](https://github.com/H1shamM/ai-email-copilot/pull/39)) — Telegram `/schedule` flow (list-only) with approve-before-create + block-on-conflict free/busy check; new `app/calendar/scheduler.py` orchestration
 
 ### Re-auth required after Story W4-A merges
 
