@@ -2,7 +2,7 @@
 
 AI-powered Gmail assistant that fetches emails, analyzes them with Claude, generates draft replies, and helps automate inbox management.
 
-See [`docs/PRD.md`](docs/PRD.md) for the full product spec and [`docs/PROGRESS.md`](docs/PROGRESS.md) for weekly status.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the system flowchart + agent request flow, [`docs/PRD.md`](docs/PRD.md) for the full product spec, and [`docs/PROGRESS.md`](docs/PROGRESS.md) for weekly status.
 
 ## Setup
 
