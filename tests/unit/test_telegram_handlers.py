@@ -711,7 +711,7 @@ async def test_cb_notify_done_ignores_malformed_callback(monkeypatch, reply_cont
 
 @pytest.mark.asyncio
 async def test_set_bot_commands_registers_all_commands():
-    """All 8 user-facing commands must be sent to Telegram's set_my_commands."""
+    """All 9 user-facing commands must be sent to Telegram's set_my_commands."""
     application = MagicMock()
     application.bot.set_my_commands = AsyncMock()
 
@@ -720,7 +720,17 @@ async def test_set_bot_commands_registers_all_commands():
     application.bot.set_my_commands.assert_awaited_once()
     sent = application.bot.set_my_commands.await_args.args[0]
     names = {c.command for c in sent}
-    assert names == {"start", "help", "unread", "analyze", "inbox", "reply", "pause", "resume"}
+    assert names == {
+        "start",
+        "help",
+        "unread",
+        "analyze",
+        "inbox",
+        "reply",
+        "schedule",
+        "pause",
+        "resume",
+    }
     # Every command needs a non-empty description so the popup row isn't blank.
     assert all(c.description for c in sent)
 
@@ -755,3 +765,163 @@ async def test_unread_drops_unauthorized(monkeypatch):
     await handlers.unread(update, None)
     assert fetch_called is False
     update.message.reply_text.assert_not_awaited()
+
+
+def _detected_event(**overrides) -> dict:
+    """A detected calendar_events row with a concrete date+time."""
+    base = {
+        "id": 3,
+        "title": "Sync with Alice",
+        "event_date": "2026-05-19",
+        "event_time": "15:00:00",
+        "duration_minutes": 60,
+        "participants": "alice@x.com",
+        "location": "Zoom",
+        "status": "detected",
+    }
+    base.update(overrides)
+    return base
+
+
+@pytest.mark.asyncio
+async def test_schedule_command_lists_dated_detected_and_hides_undated(
+    monkeypatch, authorized_update
+):
+    events = [
+        _detected_event(id=1, title="Has time"),
+        _detected_event(id=2, title="No time", event_time=None),
+        _detected_event(id=3, title="No date", event_date=None),
+    ]
+    monkeypatch.setattr(handlers.db, "get_calendar_events_by_status", lambda _: events)
+    await handlers.schedule_command(authorized_update, None)
+
+    texts = _all_reply_texts(authorized_update)
+    assert "Has time" in texts
+    assert "No time" not in texts
+    assert "No date" not in texts
+    # Exactly one message per schedulable event.
+    assert authorized_update.effective_chat.send_message.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_schedule_command_empty(monkeypatch, authorized_update):
+    monkeypatch.setattr(handlers.db, "get_calendar_events_by_status", lambda _: [])
+    await handlers.schedule_command(authorized_update, None)
+    assert "No meetings to schedule." in _all_reply_texts(authorized_update)
+
+
+@pytest.mark.asyncio
+async def test_cb_schedule_create_free_window_creates(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    monkeypatch.setattr(handlers.db, "get_calendar_event_by_id", lambda _: _detected_event())
+    monkeypatch.setattr(handlers.scheduler, "has_conflict", lambda _: False)
+    monkeypatch.setattr(handlers.scheduler, "create_event", lambda _: "goog_evt_99")
+    status_calls: list[tuple] = []
+    monkeypatch.setattr(
+        handlers.db,
+        "update_calendar_event_status",
+        lambda eid, status, **kw: status_calls.append((eid, status, kw)),
+    )
+
+    update = _make_callback_update("s:create:3")
+    await handlers.cb_schedule_create(update, reply_context)
+
+    assert status_calls == [(3, "created", {"google_event_id": "goog_evt_99"})]
+    assert "Event created" in update.effective_chat.send_message.await_args_list[-1].args[0]
+
+
+@pytest.mark.asyncio
+async def test_cb_schedule_create_conflict_blocks(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    monkeypatch.setattr(handlers.db, "get_calendar_event_by_id", lambda _: _detected_event())
+    monkeypatch.setattr(handlers.scheduler, "has_conflict", lambda _: True)
+
+    create_called = False
+
+    def _boom(_):
+        nonlocal create_called
+        create_called = True
+        return "x"
+
+    monkeypatch.setattr(handlers.scheduler, "create_event", _boom)
+    status_calls: list[tuple] = []
+    monkeypatch.setattr(
+        handlers.db,
+        "update_calendar_event_status",
+        lambda *a, **k: status_calls.append((a, k)),
+    )
+
+    update = _make_callback_update("s:create:3")
+    await handlers.cb_schedule_create(update, reply_context)
+
+    assert create_called is False
+    assert status_calls == []  # status stays 'detected'
+    assert "Conflicts" in update.effective_chat.send_message.await_args_list[-1].args[0]
+
+
+@pytest.mark.asyncio
+async def test_cb_schedule_create_api_failure_marks_failed(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    monkeypatch.setattr(handlers.db, "get_calendar_event_by_id", lambda _: _detected_event())
+    monkeypatch.setattr(handlers.scheduler, "has_conflict", lambda _: False)
+
+    def boom(_):
+        raise RuntimeError("calendar 500")
+
+    monkeypatch.setattr(handlers.scheduler, "create_event", boom)
+    status_calls: list[tuple] = []
+    monkeypatch.setattr(
+        handlers.db,
+        "update_calendar_event_status",
+        lambda eid, status, **kw: status_calls.append((eid, status, kw)),
+    )
+
+    update = _make_callback_update("s:create:3")
+    await handlers.cb_schedule_create(update, reply_context)
+
+    assert status_calls == [(3, "failed", {})]
+    assert "Create failed" in update.effective_chat.send_message.await_args_list[-1].args[0]
+
+
+@pytest.mark.asyncio
+async def test_cb_schedule_create_idempotent_when_already_created(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    monkeypatch.setattr(
+        handlers.db, "get_calendar_event_by_id", lambda _: _detected_event(status="created")
+    )
+    create_called = False
+
+    def _boom(_):
+        nonlocal create_called
+        create_called = True
+        return "x"
+
+    monkeypatch.setattr(handlers.scheduler, "create_event", _boom)
+    update = _make_callback_update("s:create:3")
+    await handlers.cb_schedule_create(update, reply_context)
+
+    assert create_called is False
+    assert "already created" in update.effective_chat.send_message.await_args_list[-1].args[0]
+
+
+@pytest.mark.asyncio
+async def test_cb_schedule_skip_marks_skipped(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    monkeypatch.setattr(handlers.db, "get_calendar_event_by_id", lambda _: _detected_event())
+    status_calls: list[tuple] = []
+    monkeypatch.setattr(
+        handlers.db,
+        "update_calendar_event_status",
+        lambda eid, status, **kw: status_calls.append((eid, status, kw)),
+    )
+
+    update = _make_callback_update("s:skip:3")
+    await handlers.cb_schedule_skip(update, reply_context)
+
+    assert status_calls == [(3, "skipped", {})]
+    assert "Skipped" in update.effective_chat.send_message.await_args_list[-1].args[0]
