@@ -137,19 +137,17 @@ The browser flow now lists Calendar alongside the Gmail scopes — grant it. Sub
 
 ---
 
-## 📋 Week 5: Agentic Workflows (Apr 19-25) - UPCOMING
+## 🔄 Week 5: Agentic Workflows (started 2026-05-21) - IN PROGRESS
 
-**Goals:**
-- Autonomous decision-making
-- Follow-up tracking
-- Smart bulk actions
+**Showcase centerpiece:** the agent satisfies the program's "advanced LLM use" threshold via **both Function Calling and Agentic Flow**, orchestrating the existing Gmail + Calendar + DB capabilities behind one natural-language command.
 
-**High-Level Tasks:**
-1. Decision agent implementation
-2. Priority scoring system
-3. Follow-up tracking
-4. Reminder system
-5. Bulk action handlers
+### Stories
+- ✅ **Story W5-A** ([#40](https://github.com/H1shamM/ai-email-copilot/issues/40) / PR [#41](https://github.com/H1shamM/ai-email-copilot/pull/41)) — Agentic `/agent` command: native Anthropic tool-use loop in `app/ai/agent.py`; read-only tools (list/get/analyze emails, check availability, draft reply) auto-execute, mutating tools (send reply / create event) queued for approve-before-act; iteration cap + error-tolerant tool results
+- 🔲 **Story W5-B** — Priority scoring / inbox triage (deterministic score, exposed as an agent tool + `/triage`)
+- 🔲 **Story W5-C** — Follow-up tracking + reminders (`followups` table → helpers + scheduler tick + agent tools)
+- 🔲 **Story W5-D** — Bulk actions (e.g. "archive all newsletters") as gated agent tools
+
+**Deferred from W5-A scope:** natural-language passthrough (routing non-command messages to the agent); centralizing the `MODEL` constant into `analyzer`/`meeting_detector`/`reply_generator`.
 
 ---
 
