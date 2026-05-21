@@ -1,7 +1,12 @@
 import json
+import logging
 import os
 
 from anthropic import Anthropic
+
+from app.ai import MODEL
+
+logger = logging.getLogger(__name__)
 
 _client = None
 
@@ -42,7 +47,7 @@ def analyze_email(email_data: dict) -> dict | None:
 
     try:
         message = _get_client().messages.create(
-            model="claude-sonnet-4-20250514",
+            model=MODEL,
             max_tokens=1000,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -58,8 +63,8 @@ def analyze_email(email_data: dict) -> dict | None:
 
         return json.loads(response_text)
     except json.JSONDecodeError as e:
-        print(f"Failed to parse analysis JSON: {e}")
+        logger.warning("Failed to parse analysis JSON: %s", e)
         return None
-    except Exception as e:
-        print(f"Claude API error: {e}")
+    except Exception:
+        logger.exception("Claude API error during analysis")
         return None

@@ -5,14 +5,17 @@ JSONDecodeError is intentionally caught separately from generic Exception
 so future schema changes are debuggable.
 """
 
+import logging
 import os
 
 from anthropic import Anthropic
 
+from app.ai import MODEL
 from app.ai.prompts import TONES, build_reply_prompt
 
-MODEL_ID = "claude-sonnet-4-20250514"
 MAX_TOKENS = 1024
+
+logger = logging.getLogger(__name__)
 
 _client: Anthropic | None = None
 
@@ -30,12 +33,12 @@ def _generate_one(email: dict, tone: str) -> str | None:
     prompt = build_reply_prompt(email, tone)
     try:
         message = _get_client().messages.create(
-            model=MODEL_ID,
+            model=MODEL,
             max_tokens=MAX_TOKENS,
             messages=[{"role": "user", "content": prompt}],
         )
-    except Exception as e:  # noqa: BLE001 — log + return None, caller decides UX
-        print(f"Claude reply generation failed for tone={tone}: {e}")
+    except Exception:  # noqa: BLE001 — log + return None, caller decides UX
+        logger.exception("Claude reply generation failed for tone=%s", tone)
         return None
 
     text = message.content[0].text.strip()
