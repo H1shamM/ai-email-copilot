@@ -7,7 +7,14 @@ from functools import wraps
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction, ParseMode
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from app.ai import agent
 from app.ai.analyzer import analyze_email
@@ -16,6 +23,7 @@ from app.ai.reply_generator import generate_replies, regenerate_one
 from app.calendar import scheduler
 from app.database import db
 from app.gmail.service import get_recent_emails as gmail_fetch_recent
+from app.gmail.service import is_no_reply_sender
 from app.gmail.service import send_reply as gmail_send_reply
 from app.telegram import push as telegram_push
 from app.telegram.conversations import WAITING_FOR_TEXT, build_edit_handler
@@ -146,6 +154,11 @@ async def unread(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"Gmail error: {exc}")
         return
     blocks = [format_unread_entry(email, i + 1) for i, email in enumerate(emails)]
+    if blocks:
+        blocks.append(
+            "_These numbers are just list positions, not reply ids\\. "
+            "To reply, run /analyze then use the \\#id shown by /inbox\\._"
+        )
     await _send_chunks(update, blocks, "No unread emails.")
 
 
@@ -153,6 +166,11 @@ async def unread(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Run Claude on every unprocessed email in the DB and reply with results."""
     await _typing(update)
+    extra = getattr(context, "args", None) or []
+    if extra:
+        await update.message.reply_text(
+            f"(/analyze takes no arguments — ignoring: {' '.join(extra)})"
+        )
     pending = db.get_unprocessed_emails()
     if not pending:
         await update.message.reply_text("No emails to analyze.")
@@ -236,6 +254,12 @@ async def _run_reply_flow(update: Update, email_id: int) -> None:
     if not email.get("processed_at"):
         await chat.send_message(f"Email {email_id} hasn't been analyzed yet — run /analyze first.")
         return
+    if is_no_reply_sender(email.get("sender")):
+        await chat.send_message(
+            f"✋ {email.get('sender') or 'This sender'} is a no-reply address — "
+            "a reply would bounce, so I didn't draft one."
+        )
+        return
 
     await _typing(update)
     await chat.send_message("✍️ Drafting 3 replies… this can take up to a minute.")
@@ -274,6 +298,10 @@ async def reply_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not args or not args[0].isdigit():
         await update.effective_chat.send_message("Usage: /reply <email_id>")
         return
+    if len(args) > 1:
+        await update.effective_chat.send_message(
+            f"Ignoring extra argument(s): {' '.join(args[1:])}"
+        )
     await _run_reply_flow(update, int(args[0]))
 
 
@@ -315,6 +343,11 @@ async def _send_draft(
     email = db.get_email_by_row_id(draft["email_id"])
     if email is None:
         await update.effective_chat.send_message("Original email not found in DB.")
+        return
+    if is_no_reply_sender(email.get("sender")):
+        await update.effective_chat.send_message(
+            "✋ That email is from a no-reply address — a reply would bounce, so I didn't send it."
+        )
         return
 
     try:
@@ -619,6 +652,21 @@ async def cb_agent_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.effective_chat.send_message("✖ Cancelled — nothing was done.")
 
 
+@authorized_only
+async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Catch-all for unrecognized /commands so the user isn't left guessing."""
+    await update.message.reply_text("Unknown command. Send /help to see what I can do.")
+
+
+@authorized_only
+async def fallback_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Catch-all for plain (non-command) text so the bot always responds."""
+    await update.message.reply_text(
+        "I only respond to commands. Send /help to see them, "
+        "or use /agent <text> to ask in natural language."
+    )
+
+
 def register(application: Application) -> None:
     """Register all command handlers on the given Application."""
     application.add_handler(CommandHandler("start", start))
@@ -644,3 +692,8 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(cb_schedule_skip, pattern=r"^s:skip:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_agent_approve, pattern=r"^a:approve$"))
     application.add_handler(CallbackQueryHandler(cb_agent_cancel, pattern=r"^a:cancel$"))
+
+    # Fallbacks LAST so they never shadow known commands or the edit conversation:
+    # an unrecognized /command, then any plain (non-command) text.
+    application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_text))

@@ -60,6 +60,20 @@ async def test_unread_replies_empty_message_when_no_unread(monkeypatch, authoriz
 
 
 @pytest.mark.asyncio
+async def test_unread_appends_clarifying_id_footer(monkeypatch, authorized_update):
+    """The list numbers aren't /reply ids — a footer must say so to avoid the footgun."""
+    monkeypatch.setattr(
+        handlers,
+        "gmail_fetch_recent",
+        lambda max_results, unread_only: [{"sender": "a@b.com", "subject": "Hi", "snippet": "x"}],
+    )
+    await handlers.unread(authorized_update, None)
+    text = _all_reply_texts(authorized_update)
+    assert "not reply ids" in text
+    assert "/inbox" in text
+
+
+@pytest.mark.asyncio
 async def test_unread_reports_gmail_error(monkeypatch, authorized_update):
     def raise_runtime(**_):
         raise RuntimeError("boom")
@@ -212,6 +226,39 @@ async def test_reply_command_rejects_missing_arg(monkeypatch, authorized_update,
 
 
 @pytest.mark.asyncio
+async def test_reply_command_notes_ignored_extra_args(
+    monkeypatch, authorized_update, reply_context
+):
+    """`/reply 5 banana` must run for id 5 but tell the user 'banana' was ignored."""
+    flow_calls: list = []
+
+    async def fake_flow(update, email_id):
+        flow_calls.append(email_id)
+
+    monkeypatch.setattr(handlers, "_run_reply_flow", fake_flow)
+    reply_context.args = ["5", "banana"]
+    await handlers.reply_command(authorized_update, reply_context)
+
+    assert flow_calls == [5]  # still ran for the valid id
+    text = _all_reply_texts(authorized_update)
+    assert "Ignoring extra argument" in text
+    assert "banana" in text
+
+
+@pytest.mark.asyncio
+async def test_analyze_notes_ignored_args(monkeypatch, authorized_update, reply_context):
+    """`/analyze 999` must say the arg is ignored and still run normally."""
+    monkeypatch.setattr(handlers.db, "get_unprocessed_emails", list)
+    reply_context.args = ["999"]
+    await handlers.analyze(authorized_update, reply_context)
+
+    text = _all_reply_texts(authorized_update)
+    assert "ignoring" in text.lower()
+    assert "999" in text
+    assert "No emails to analyze." in text
+
+
+@pytest.mark.asyncio
 async def test_reply_command_rejects_unknown_email(monkeypatch, authorized_update, reply_context):
     monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: None)
     reply_context.args = ["999"]
@@ -295,6 +342,71 @@ async def test_reply_drafting_message_has_realistic_eta(monkeypatch, authorized_
     assert "Drafting" in text
     assert "~10s" not in text
     assert "minute" in text
+
+
+@pytest.mark.asyncio
+async def test_reply_command_skips_no_reply_sender(monkeypatch, authorized_update, reply_context):
+    """A no-reply sender must be refused before any draft is generated."""
+    row = _analyzed_email_row()
+    row["sender"] = "LinkedIn <messages-noreply@linkedin.com>"
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: row)
+
+    gen_called = False
+
+    def fake_generate(_):
+        nonlocal gen_called
+        gen_called = True
+        return {"brief": "Yes"}
+
+    monkeypatch.setattr(handlers, "generate_replies", fake_generate)
+    reply_context.args = ["5"]
+    await handlers.reply_command(authorized_update, reply_context)
+
+    assert gen_called is False  # never reached draft generation
+    text = _all_reply_texts(authorized_update)
+    assert "no-reply address" in text
+    assert "Drafting" not in text
+
+
+@pytest.mark.asyncio
+async def test_cb_approve_blocks_no_reply_send(monkeypatch, reply_context):
+    """Defense-in-depth: approving a draft for a no-reply email must not send."""
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    monkeypatch.setattr(
+        handlers.db,
+        "get_draft_by_id",
+        lambda _: {
+            "id": 7,
+            "email_id": 5,
+            "tone": "brief",
+            "draft_text": "Yes",
+            "status": "pending",
+        },
+    )
+    row = _analyzed_email_row()
+    row["sender"] = "notifications-noreply@linkedin.com"
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: row)
+
+    send_called = False
+
+    def fake_send(*_):
+        nonlocal send_called
+        send_called = True
+        return "id"
+
+    monkeypatch.setattr(handlers, "gmail_send_reply", fake_send)
+    status_calls: list = []
+    monkeypatch.setattr(
+        handlers.db, "update_draft_status", lambda *a, **k: status_calls.append((a, k))
+    )
+
+    update = _make_callback_update("r:approve:7")
+    await handlers.cb_approve(update, reply_context)
+
+    assert send_called is False
+    assert status_calls == []  # draft NOT marked sent
+    assert "no-reply address" in update.effective_chat.send_message.await_args_list[-1].args[0]
 
 
 def _make_callback_update(data: str, chat_id: int = 42) -> MagicMock:
@@ -1041,3 +1153,41 @@ async def test_cb_agent_cancel_discards(monkeypatch, reply_context):
     await handlers.cb_agent_cancel(update, reply_context)
     assert "agent_pending" not in reply_context.user_data
     assert "Cancelled" in update.effective_chat.send_message.await_args_list[-1].args[0]
+
+
+@pytest.mark.asyncio
+async def test_unknown_command_replies_hint(authorized_update):
+    await handlers.unknown_command(authorized_update, None)
+    text = _all_reply_texts(authorized_update)
+    assert "Unknown command" in text
+    assert "/help" in text
+
+
+@pytest.mark.asyncio
+async def test_fallback_text_replies_hint(authorized_update):
+    await handlers.fallback_text(authorized_update, None)
+    text = _all_reply_texts(authorized_update)
+    assert "/help" in text
+
+
+@pytest.mark.asyncio
+async def test_unknown_command_drops_unauthorized(monkeypatch):
+    """The @authorized_only guard must still silently drop foreign chats."""
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    update = MagicMock()
+    update.effective_chat.id = 99
+    update.message.reply_text = AsyncMock()
+    await handlers.unknown_command(update, None)
+    update.message.reply_text.assert_not_awaited()
+
+
+def test_register_adds_exactly_two_fallback_message_handlers():
+    """Fallbacks must be registered (and only the two), so plain text/unknown
+    commands get a reply without shadowing the edit ConversationHandler."""
+    from telegram.ext import MessageHandler
+
+    app = MagicMock()
+    handlers.register(app)
+    added = [c.args[0] for c in app.add_handler.call_args_list]
+    msg_handlers = [h for h in added if isinstance(h, MessageHandler)]
+    assert len(msg_handlers) == 2
