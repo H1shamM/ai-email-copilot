@@ -204,7 +204,7 @@ The browser flow now lists Calendar alongside the Gmail scopes — grant it. Sub
 - 🔲 CloudWatch logs agent on instance; systemd unit logs to journald → CloudWatch
 - 🔲 One alarm: "uvicorn unit not active for 5 min" → email
 - 🔲 Enrich `/health` with DB connectivity + Telegram `getMe` (Gmail token validity is covered by the scheduled monitor — deliberately not a live call on the frequently-pinged `/health`)
-- 🔲 Python root logger configured at INFO so `logger.info(...)` messages reach journald (caught during W6-A: only uvicorn's own INFO lines were visible)
+- ✅ **Python root logger at INFO** ([#46](https://github.com/H1shamM/ai-email-copilot/issues/46) / PR [#47](https://github.com/H1shamM/ai-email-copilot/pull/47)) — `logging.basicConfig(level=LOG_LEVEL)` at startup so app + APScheduler `INFO` reach journald (verified: "OAuth monitor started" + scheduled `check_and_alert` now visible in `journalctl -u copilot`)
 
 > Root cause of the OAuth incidents: the app is a Google "Testing" OAuth app, whose refresh tokens expire ~7 days after issuance. The monitor surfaces this early but cannot prevent it — the real fix is publishing the OAuth app (External → Production, needs Google verification for restricted Gmail scopes).
 
