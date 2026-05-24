@@ -58,6 +58,41 @@ def parse_email(msg_data):
     }
 
 
+NO_REPLY_PATTERNS: tuple[str, ...] = (
+    "noreply",
+    "no-reply",
+    "no_reply",
+    "donotreply",
+    "do-not-reply",
+    "do_not_reply",
+)
+
+
+def extract_email_address(sender: str | None) -> str | None:
+    """Pull the bare address out of a From header like 'Name <a@b.com>'."""
+    if not sender:
+        return None
+    start = sender.rfind("<")
+    end = sender.rfind(">")
+    if start != -1 and end != -1 and end > start:
+        addr = sender[start + 1 : end]
+    else:
+        addr = sender
+    return addr.strip() or None
+
+
+def is_no_reply_sender(sender: str | None) -> bool:
+    """True when the sender looks like a no-reply / automated mailbox.
+
+    A reply to these bounces, so the bot refuses rather than drafting + sending.
+    """
+    addr = extract_email_address(sender)
+    if not addr or "@" not in addr:
+        return False
+    local = addr.split("@", 1)[0].lower()
+    return any(pattern in local for pattern in NO_REPLY_PATTERNS)
+
+
 REPLY_HEADERS = ["From", "To", "Subject", "Message-ID", "References", "Reply-To"]
 
 
