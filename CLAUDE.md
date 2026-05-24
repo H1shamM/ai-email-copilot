@@ -160,6 +160,7 @@ Listed in `.env.example`. Don't commit real values.
 | `TELEGRAM_PUSH_THRESHOLD` | Notify only when `urgency_score >= N` (default `4`) |
 | `TELEGRAM_OAUTH_CHECK_ENABLED` | `true`/`false` — auto-start the Gmail OAuth health monitor on startup (default `true`) |
 | `TELEGRAM_OAUTH_CHECK_INTERVAL_HOURS` | OAuth check interval in hours, minimum 5 minutes (default `24`) |
+| `LOG_LEVEL` | Root logger level set at startup so app + scheduler logs reach journald (default `INFO`) |
 
 `token.pickle` (Gmail OAuth) is generated on first auth and refreshed automatically. If `invalid_grant` errors appear, the refresh token has been revoked (Google revokes tokens for "Testing" apps after ~7 days of inactivity) — delete `token.pickle` and re-run `python -c "from app.gmail.auth import get_credentials; get_credentials()"` to re-auth.
 

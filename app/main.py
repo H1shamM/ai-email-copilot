@@ -23,6 +23,15 @@ app = FastAPI(title="AI Email Copilot")
 
 @app.on_event("startup")
 async def startup():
+    # Configure the root logger so app + APScheduler INFO logs reach stdout →
+    # journald → CloudWatch. uvicorn only wires its own `uvicorn.*` loggers, so
+    # without this `logger.info(...)` from our modules is invisible on the server.
+    # Done here (not at import) so it doesn't reconfigure logging during tests.
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+
     db.init_db()
 
     webhook_url = os.getenv("TELEGRAM_WEBHOOK_URL")
