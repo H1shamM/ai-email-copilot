@@ -226,6 +226,39 @@ async def test_reply_command_rejects_missing_arg(monkeypatch, authorized_update,
 
 
 @pytest.mark.asyncio
+async def test_reply_command_notes_ignored_extra_args(
+    monkeypatch, authorized_update, reply_context
+):
+    """`/reply 5 banana` must run for id 5 but tell the user 'banana' was ignored."""
+    flow_calls: list = []
+
+    async def fake_flow(update, email_id):
+        flow_calls.append(email_id)
+
+    monkeypatch.setattr(handlers, "_run_reply_flow", fake_flow)
+    reply_context.args = ["5", "banana"]
+    await handlers.reply_command(authorized_update, reply_context)
+
+    assert flow_calls == [5]  # still ran for the valid id
+    text = _all_reply_texts(authorized_update)
+    assert "Ignoring extra argument" in text
+    assert "banana" in text
+
+
+@pytest.mark.asyncio
+async def test_analyze_notes_ignored_args(monkeypatch, authorized_update, reply_context):
+    """`/analyze 999` must say the arg is ignored and still run normally."""
+    monkeypatch.setattr(handlers.db, "get_unprocessed_emails", list)
+    reply_context.args = ["999"]
+    await handlers.analyze(authorized_update, reply_context)
+
+    text = _all_reply_texts(authorized_update)
+    assert "ignoring" in text.lower()
+    assert "999" in text
+    assert "No emails to analyze." in text
+
+
+@pytest.mark.asyncio
 async def test_reply_command_rejects_unknown_email(monkeypatch, authorized_update, reply_context):
     monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: None)
     reply_context.args = ["999"]

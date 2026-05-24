@@ -166,6 +166,11 @@ async def unread(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Run Claude on every unprocessed email in the DB and reply with results."""
     await _typing(update)
+    extra = getattr(context, "args", None) or []
+    if extra:
+        await update.message.reply_text(
+            f"(/analyze takes no arguments — ignoring: {' '.join(extra)})"
+        )
     pending = db.get_unprocessed_emails()
     if not pending:
         await update.message.reply_text("No emails to analyze.")
@@ -293,6 +298,10 @@ async def reply_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not args or not args[0].isdigit():
         await update.effective_chat.send_message("Usage: /reply <email_id>")
         return
+    if len(args) > 1:
+        await update.effective_chat.send_message(
+            f"Ignoring extra argument(s): {' '.join(args[1:])}"
+        )
     await _run_reply_flow(update, int(args[0]))
 
 
