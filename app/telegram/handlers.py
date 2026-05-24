@@ -146,6 +146,11 @@ async def unread(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"Gmail error: {exc}")
         return
     blocks = [format_unread_entry(email, i + 1) for i, email in enumerate(emails)]
+    if blocks:
+        blocks.append(
+            "_These numbers are just list positions, not reply ids\\. "
+            "To reply, run /analyze then use the \\#id shown by /inbox\\._"
+        )
     await _send_chunks(update, blocks, "No unread emails.")
 
 
