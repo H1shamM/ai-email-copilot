@@ -212,6 +212,28 @@ The browser flow now lists Calendar alongside the Gmail scopes — grant it. Sub
 
 ---
 
+## 🐛 QA Hardening Pass (2026-05-24/25)
+
+A senior-QA test pass of the live Telegram bot (driven through Telegram Web) exercised every command's happy path, edge cases, and error handling. No crashes or raw stack traces surfaced, but six defects were filed and fixed — two medium-severity, four low. Each shipped as its own branch/PR with unit tests; all merged to `main`.
+
+| Issue | PR | Fix |
+|---|---|---|
+| [#48](https://github.com/H1shamM/ai-email-copilot/issues/48) | [#54](https://github.com/H1shamM/ai-email-copilot/pull/54) | Refuse to draft/send replies to **no-reply senders** — `is_no_reply_sender()` + draft-time gate in `_run_reply_flow` + send-time guard in `_send_draft`, replacing the previous non-deterministic (model-emergent) refusal |
+| [#49](https://github.com/H1shamM/ai-email-copilot/issues/49) | [#55](https://github.com/H1shamM/ai-email-copilot/pull/55) | Reply to **unknown commands & plain text** instead of silently dropping them — `MessageHandler` fallbacks registered last so they don't shadow commands or the edit `ConversationHandler` |
+| [#50](https://github.com/H1shamM/ai-email-copilot/issues/50) | [#56](https://github.com/H1shamM/ai-email-copilot/pull/56) | Clarify `/unread`'s list numbers aren't `/reply` ids (footer pointing to `/analyze` → `/inbox`) |
+| [#51](https://github.com/H1shamM/ai-email-copilot/issues/51) | [#57](https://github.com/H1shamM/ai-email-copilot/pull/57) | Acknowledge **ignored extra arguments** on `/reply` and `/analyze` |
+| [#52](https://github.com/H1shamM/ai-email-copilot/issues/52) | [#58](https://github.com/H1shamM/ai-email-copilot/pull/58) | Realistic `/reply` drafting **ETA** ("up to a minute" vs the old "~10s") |
+| [#53](https://github.com/H1shamM/ai-email-copilot/issues/53) | [#59](https://github.com/H1shamM/ai-email-copilot/pull/59) | Deterministic `/inbox` **ordering** — `created_at DESC, id DESC` tiebreaker (not `received_date`, which stores an unsortable RFC 2822 string) |
+
+**Follow-ups noted (not blocking):**
+- #48 detection covers no-reply *patterns* but not automated senders lacking such a token (e.g. `jobs-listings@`).
+- #53 true received-time ordering would need a parsed/ISO received timestamp stored on ingest.
+- #52 could parallelize the three tone generations to actually shorten the wait.
+
+Final suite after all merges: **261 passing, ~94% coverage.**
+
+---
+
 ## 📋 Week 6 (original): UI & Demo - SUPERSEDED
 
 Original goals (production UI + demo video + elevator pitch) were absorbed into Week 3's Telegram pivot. This slot is now Week 6 = Deployment.
@@ -322,5 +344,5 @@ claude "Start Week 3 Task 1: Draft Reply Generation. Create feature branch and i
 
 ---
 
-**Last Updated:** [Date]  
-**Current Focus:** Week 3 - Core Chat Logic
+**Last Updated:** 2026-05-25  
+**Current Focus:** Week 5 (Agentic) + Week 6-C (observability); QA hardening pass complete
