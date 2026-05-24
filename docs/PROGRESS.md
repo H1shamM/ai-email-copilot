@@ -197,14 +197,16 @@ The browser flow now lists Calendar alongside the Gmail scopes — grant it. Sub
 
 #### Story W6-C: Observability + OAuth health
 **Branch:** `feature/aws-monitoring-oauth-health`
-**Status:** 🔲 Not started
+**Status:** 🔄 In progress — OAuth monitor shipped ([#44](https://github.com/H1shamM/ai-email-copilot/issues/44) / PR [#45](https://github.com/H1shamM/ai-email-copilot/pull/45)); CloudWatch + enriched `/health` still open
 **Size:** M
 **Scope:**
-- CloudWatch logs agent on instance; systemd unit logs to journald → CloudWatch
-- One alarm: "uvicorn unit not active for 5 min" → email
-- Enrich `/health` with DB connectivity + Telegram `getMe` + Gmail token validity
-- Weekly cron self-pings `/health`; alerts when Gmail OAuth expires (Google revokes Testing-app refresh tokens after 7 idle days)
-- Python root logger configured at INFO so `logger.info(...)` messages reach journald (caught during W6-A: only uvicorn's own INFO lines were visible)
+- ✅ **Gmail OAuth health monitor** (`app/telegram/oauth_monitor.py`) — scheduled non-interactive token check that DMs the user on the healthy→broken edge + on recovery; `auth.get_credentials()` now raises a clear error on `RefreshError` so `/unread` no longer fails silently. Driven by a real incident: revoked Testing-app token returned silence. Gated by `TELEGRAM_OAUTH_CHECK_ENABLED` / `_INTERVAL_HOURS`.
+- 🔲 CloudWatch logs agent on instance; systemd unit logs to journald → CloudWatch
+- 🔲 One alarm: "uvicorn unit not active for 5 min" → email
+- 🔲 Enrich `/health` with DB connectivity + Telegram `getMe` (Gmail token validity is covered by the scheduled monitor — deliberately not a live call on the frequently-pinged `/health`)
+- 🔲 Python root logger configured at INFO so `logger.info(...)` messages reach journald (caught during W6-A: only uvicorn's own INFO lines were visible)
+
+> Root cause of the OAuth incidents: the app is a Google "Testing" OAuth app, whose refresh tokens expire ~7 days after issuance. The monitor surfaces this early but cannot prevent it — the real fix is publishing the OAuth app (External → Production, needs Google verification for restricted Gmail scopes).
 
 **Cost target:** ~$5/mo steady-state plus Anthropic API charges.
 
