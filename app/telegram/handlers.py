@@ -7,7 +7,14 @@ from functools import wraps
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction, ParseMode
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from app.ai import agent
 from app.ai.analyzer import analyze_email
@@ -619,6 +626,21 @@ async def cb_agent_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.effective_chat.send_message("✖ Cancelled — nothing was done.")
 
 
+@authorized_only
+async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Catch-all for unrecognized /commands so the user isn't left guessing."""
+    await update.message.reply_text("Unknown command. Send /help to see what I can do.")
+
+
+@authorized_only
+async def fallback_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Catch-all for plain (non-command) text so the bot always responds."""
+    await update.message.reply_text(
+        "I only respond to commands. Send /help to see them, "
+        "or use /agent <text> to ask in natural language."
+    )
+
+
 def register(application: Application) -> None:
     """Register all command handlers on the given Application."""
     application.add_handler(CommandHandler("start", start))
@@ -644,3 +666,8 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(cb_schedule_skip, pattern=r"^s:skip:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_agent_approve, pattern=r"^a:approve$"))
     application.add_handler(CallbackQueryHandler(cb_agent_cancel, pattern=r"^a:cancel$"))
+
+    # Fallbacks LAST so they never shadow known commands or the edit conversation:
+    # an unrecognized /command, then any plain (non-command) text.
+    application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_text))
