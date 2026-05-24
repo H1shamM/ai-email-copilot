@@ -327,6 +327,24 @@ async def test_reply_command_handles_empty_generation(
 
 
 @pytest.mark.asyncio
+async def test_reply_drafting_message_has_realistic_eta(monkeypatch, authorized_update):
+    """The progress message must not under-promise the ~1 min generation time."""
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: _analyzed_email_row())
+    monkeypatch.setattr(handlers, "generate_replies", lambda _: {"brief": "Yes"})
+    monkeypatch.setattr(handlers.db, "insert_draft_reply", lambda *_: 1)
+    monkeypatch.setattr(
+        handlers.db,
+        "get_draft_by_id",
+        lambda did: {"id": did, "tone": "brief", "draft_text": "Yes"},
+    )
+    await handlers._run_reply_flow(authorized_update, 5)
+    text = _all_reply_texts(authorized_update)
+    assert "Drafting" in text
+    assert "~10s" not in text
+    assert "minute" in text
+
+
+@pytest.mark.asyncio
 async def test_reply_command_skips_no_reply_sender(monkeypatch, authorized_update, reply_context):
     """A no-reply sender must be refused before any draft is generated."""
     row = _analyzed_email_row()
