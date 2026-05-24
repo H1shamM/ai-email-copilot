@@ -1088,3 +1088,41 @@ async def test_cb_agent_cancel_discards(monkeypatch, reply_context):
     await handlers.cb_agent_cancel(update, reply_context)
     assert "agent_pending" not in reply_context.user_data
     assert "Cancelled" in update.effective_chat.send_message.await_args_list[-1].args[0]
+
+
+@pytest.mark.asyncio
+async def test_unknown_command_replies_hint(authorized_update):
+    await handlers.unknown_command(authorized_update, None)
+    text = _all_reply_texts(authorized_update)
+    assert "Unknown command" in text
+    assert "/help" in text
+
+
+@pytest.mark.asyncio
+async def test_fallback_text_replies_hint(authorized_update):
+    await handlers.fallback_text(authorized_update, None)
+    text = _all_reply_texts(authorized_update)
+    assert "/help" in text
+
+
+@pytest.mark.asyncio
+async def test_unknown_command_drops_unauthorized(monkeypatch):
+    """The @authorized_only guard must still silently drop foreign chats."""
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    update = MagicMock()
+    update.effective_chat.id = 99
+    update.message.reply_text = AsyncMock()
+    await handlers.unknown_command(update, None)
+    update.message.reply_text.assert_not_awaited()
+
+
+def test_register_adds_exactly_two_fallback_message_handlers():
+    """Fallbacks must be registered (and only the two), so plain text/unknown
+    commands get a reply without shadowing the edit ConversationHandler."""
+    from telegram.ext import MessageHandler
+
+    app = MagicMock()
+    handlers.register(app)
+    added = [c.args[0] for c in app.add_handler.call_args_list]
+    msg_handlers = [h for h in added if isinstance(h, MessageHandler)]
+    assert len(msg_handlers) == 2
