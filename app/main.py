@@ -13,6 +13,7 @@ from app.ai.meeting_detector import maybe_detect_meeting  # noqa: E402
 from app.database import db  # noqa: E402
 from app.telegram import bot as telegram_bot  # noqa: E402
 from app.telegram import handlers as telegram_handlers  # noqa: E402
+from app.telegram import oauth_monitor as telegram_oauth_monitor  # noqa: E402
 from app.telegram import push as telegram_push  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -41,9 +42,14 @@ async def startup():
         threshold = int(os.getenv("TELEGRAM_PUSH_THRESHOLD", "4"))
         telegram_push.start(application, interval_minutes=interval, threshold=threshold)
 
+    if telegram_oauth_monitor.is_enabled_at_boot():
+        oauth_interval = int(os.getenv("TELEGRAM_OAUTH_CHECK_INTERVAL_HOURS", "24"))
+        telegram_oauth_monitor.start(application, interval_hours=oauth_interval)
+
 
 @app.on_event("shutdown")
 async def shutdown():
+    telegram_oauth_monitor.stop()
     telegram_push.stop()
     await telegram_bot.shutdown()
 
