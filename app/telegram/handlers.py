@@ -16,6 +16,7 @@ from app.ai.reply_generator import generate_replies, regenerate_one
 from app.calendar import scheduler
 from app.database import db
 from app.gmail.service import get_recent_emails as gmail_fetch_recent
+from app.gmail.service import is_no_reply_sender
 from app.gmail.service import send_reply as gmail_send_reply
 from app.telegram import push as telegram_push
 from app.telegram.conversations import WAITING_FOR_TEXT, build_edit_handler
@@ -236,6 +237,12 @@ async def _run_reply_flow(update: Update, email_id: int) -> None:
     if not email.get("processed_at"):
         await chat.send_message(f"Email {email_id} hasn't been analyzed yet — run /analyze first.")
         return
+    if is_no_reply_sender(email.get("sender")):
+        await chat.send_message(
+            f"✋ {email.get('sender') or 'This sender'} is a no-reply address — "
+            "a reply would bounce, so I didn't draft one."
+        )
+        return
 
     await _typing(update)
     await chat.send_message("✍️ Drafting 3 replies… ~10s.")
@@ -315,6 +322,11 @@ async def _send_draft(
     email = db.get_email_by_row_id(draft["email_id"])
     if email is None:
         await update.effective_chat.send_message("Original email not found in DB.")
+        return
+    if is_no_reply_sender(email.get("sender")):
+        await update.effective_chat.send_message(
+            "✋ That email is from a no-reply address — a reply would bounce, so I didn't send it."
+        )
         return
 
     try:

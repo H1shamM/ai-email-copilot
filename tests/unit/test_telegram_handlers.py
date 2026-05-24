@@ -279,6 +279,71 @@ async def test_reply_command_handles_empty_generation(
     assert "Couldn't draft replies" in _all_reply_texts(authorized_update)
 
 
+@pytest.mark.asyncio
+async def test_reply_command_skips_no_reply_sender(monkeypatch, authorized_update, reply_context):
+    """A no-reply sender must be refused before any draft is generated."""
+    row = _analyzed_email_row()
+    row["sender"] = "LinkedIn <messages-noreply@linkedin.com>"
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: row)
+
+    gen_called = False
+
+    def fake_generate(_):
+        nonlocal gen_called
+        gen_called = True
+        return {"brief": "Yes"}
+
+    monkeypatch.setattr(handlers, "generate_replies", fake_generate)
+    reply_context.args = ["5"]
+    await handlers.reply_command(authorized_update, reply_context)
+
+    assert gen_called is False  # never reached draft generation
+    text = _all_reply_texts(authorized_update)
+    assert "no-reply address" in text
+    assert "Drafting" not in text
+
+
+@pytest.mark.asyncio
+async def test_cb_approve_blocks_no_reply_send(monkeypatch, reply_context):
+    """Defense-in-depth: approving a draft for a no-reply email must not send."""
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    monkeypatch.setattr(
+        handlers.db,
+        "get_draft_by_id",
+        lambda _: {
+            "id": 7,
+            "email_id": 5,
+            "tone": "brief",
+            "draft_text": "Yes",
+            "status": "pending",
+        },
+    )
+    row = _analyzed_email_row()
+    row["sender"] = "notifications-noreply@linkedin.com"
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: row)
+
+    send_called = False
+
+    def fake_send(*_):
+        nonlocal send_called
+        send_called = True
+        return "id"
+
+    monkeypatch.setattr(handlers, "gmail_send_reply", fake_send)
+    status_calls: list = []
+    monkeypatch.setattr(
+        handlers.db, "update_draft_status", lambda *a, **k: status_calls.append((a, k))
+    )
+
+    update = _make_callback_update("r:approve:7")
+    await handlers.cb_approve(update, reply_context)
+
+    assert send_called is False
+    assert status_calls == []  # draft NOT marked sent
+    assert "no-reply address" in update.effective_chat.send_message.await_args_list[-1].args[0]
+
+
 def _make_callback_update(data: str, chat_id: int = 42) -> MagicMock:
     update = MagicMock()
     update.effective_chat.id = chat_id
