@@ -238,7 +238,7 @@ async def _run_reply_flow(update: Update, email_id: int) -> None:
         return
 
     await _typing(update)
-    await chat.send_message("✍️ Drafting 3 replies… ~10s.")
+    await chat.send_message("✍️ Drafting 3 replies… this can take up to a minute.")
     await _typing(update)
     replies = await asyncio.to_thread(generate_replies, email)
     if not replies:
