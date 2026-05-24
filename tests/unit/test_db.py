@@ -42,6 +42,25 @@ def test_insert_email_returns_row_id():
     assert row_id is not None and row_id > 0
 
 
+def test_get_recent_emails_orders_newest_first_deterministically():
+    """Equal created_at (batch inserts) must break ties on id DESC, not arbitrarily."""
+    for i in range(1, 4):
+        db.insert_email(
+            {
+                "id": f"m{i}",
+                "thread_id": "t",
+                "sender": "a@b.com",
+                "subject": f"s{i}",
+                "body": "b",
+                "snippet": "",
+                "date": "2026-04-15",
+            }
+        )
+    rows = db.get_recent_emails(limit=10)
+    ids = [r["id"] for r in rows]
+    assert ids == [3, 2, 1]
+
+
 def test_insert_email_is_idempotent():
     email = {
         "id": "msg_dup",

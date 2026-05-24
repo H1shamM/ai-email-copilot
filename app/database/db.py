@@ -202,7 +202,7 @@ def get_recent_emails(limit: int = 50) -> list[dict]:
     conn = get_connection()
     try:
         rows = conn.execute(
-            "SELECT * FROM emails ORDER BY created_at DESC LIMIT ?", (limit,)
+            "SELECT * FROM emails ORDER BY created_at DESC, id DESC LIMIT ?", (limit,)
         ).fetchall()
         return [dict(row) for row in rows]
     finally:
