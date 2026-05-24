@@ -60,6 +60,20 @@ async def test_unread_replies_empty_message_when_no_unread(monkeypatch, authoriz
 
 
 @pytest.mark.asyncio
+async def test_unread_appends_clarifying_id_footer(monkeypatch, authorized_update):
+    """The list numbers aren't /reply ids — a footer must say so to avoid the footgun."""
+    monkeypatch.setattr(
+        handlers,
+        "gmail_fetch_recent",
+        lambda max_results, unread_only: [{"sender": "a@b.com", "subject": "Hi", "snippet": "x"}],
+    )
+    await handlers.unread(authorized_update, None)
+    text = _all_reply_texts(authorized_update)
+    assert "not reply ids" in text
+    assert "/inbox" in text
+
+
+@pytest.mark.asyncio
 async def test_unread_reports_gmail_error(monkeypatch, authorized_update):
     def raise_runtime(**_):
         raise RuntimeError("boom")
