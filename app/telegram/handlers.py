@@ -134,6 +134,16 @@ async def _typing(update: Update) -> None:
         logger.debug("send_chat_action failed; continuing without typing indicator")
 
 
+async def _safe_delete(message) -> None:
+    """Best-effort removal of a transient status message; never fail the handler over it."""
+    if message is None:
+        return
+    try:
+        await message.delete()
+    except Exception:  # noqa: BLE001 — cleanup is cosmetic
+        logger.debug("status message delete failed; leaving it in place")
+
+
 async def _send_chunks(update: Update, blocks: list[str], empty_message: str) -> None:
     """Render blocks via chunk_messages and send each as MarkdownV2."""
     if not blocks:
@@ -595,14 +605,17 @@ async def agent_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     await _typing(update)
-    await chat.send_message("🤖 Working on it…")
+    status = await chat.send_message("🤖 Working on it…")
     await _typing(update)
     try:
         text, pending = await asyncio.to_thread(agent.run_agent, instruction)
     except Exception as exc:  # noqa: BLE001 — surface a generic failure to the user
         logger.exception("Agent run failed")
+        await _safe_delete(status)
         await chat.send_message(f"Agent failed: {exc}")
         return
+
+    await _safe_delete(status)
 
     if not pending:
         await chat.send_message(text or "Done — nothing to do.")

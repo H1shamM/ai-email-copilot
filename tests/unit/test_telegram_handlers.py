@@ -1076,6 +1076,20 @@ async def test_agent_command_text_only_no_pending(monkeypatch, authorized_update
 
 
 @pytest.mark.asyncio
+async def test_agent_command_deletes_status_message(monkeypatch, authorized_update, reply_context):
+    status = MagicMock()
+    status.delete = AsyncMock()
+    authorized_update.effective_chat.send_message = AsyncMock(return_value=status)
+    monkeypatch.setattr(handlers.agent, "run_agent", lambda instr: ("Summary.", []))
+    reply_context.args = ["summarize"]
+
+    await handlers.agent_command(authorized_update, reply_context)
+
+    # The transient "🤖 Working on it…" status is removed, not left orphaned.
+    status.delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_agent_command_with_pending_shows_keyboard_and_stores(
     monkeypatch, authorized_update, reply_context
 ):
