@@ -107,8 +107,36 @@ def test_iteration_cap_stops_runaway_loop(monkeypatch):
 
     text, pending = agent.run_agent("loop forever")
 
-    assert len(client.calls) == agent.MAX_ITERATIONS
+    # MAX_ITERATIONS tool rounds + one forced final-answer turn.
+    assert len(client.calls) == agent.MAX_ITERATIONS + 1
     assert pending == []
+    # A pathological loop that yields no text still returns a usable fallback,
+    # never an empty/dangling response.
+    assert text == agent.CAP_FALLBACK
+
+
+def test_iteration_cap_forces_final_answer(monkeypatch):
+    """Hitting the cap mid-loop must synthesize a real answer, not return interim text."""
+    monkeypatch.setattr(agent.db, "get_recent_emails", lambda limit: [])
+    # Every in-loop round emits interim narration alongside a tool call (never a clean stop).
+    responses = [
+        _response(
+            "tool_use",
+            [_text("Now let me analyze each email…"), _tool(f"t{i}", "list_recent_emails", {})],
+        )
+        for i in range(agent.MAX_ITERATIONS)
+    ]
+    # The forced, tool-free turn returns the actual synthesized answer.
+    responses.append(_response("end_turn", [_text("Here is the full breakdown.")]))
+    client = _install(monkeypatch, responses)
+
+    text, pending = agent.run_agent("be very thorough about every unread email")
+
+    assert text == "Here is the full breakdown."  # not the interim "Now let me analyze…"
+    assert pending == []
+    assert len(client.calls) == agent.MAX_ITERATIONS + 1
+    # The final turn disables further tool use so the model must produce text.
+    assert client.calls[-1].get("tool_choice") == {"type": "none"}
 
 
 def test_unknown_tool_returns_error_result(monkeypatch):

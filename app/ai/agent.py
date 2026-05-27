@@ -21,8 +21,13 @@ from app.gmail.service import send_reply as gmail_send_reply
 
 _client: Anthropic | None = None
 
-MAX_TOKENS = 1024
-MAX_ITERATIONS = 5
+MAX_TOKENS = 2048
+MAX_ITERATIONS = 8
+
+# Shown when the loop hits MAX_ITERATIONS and even a forced final turn yields no text.
+CAP_FALLBACK = (
+    "I couldn't finish that in the steps available — try a narrower or more specific request."
+)
 
 SYSTEM_PROMPT = (
     "You are an email assistant agent operating over the user's Gmail and Google "
@@ -229,6 +234,7 @@ def run_agent(instruction: str) -> tuple[str, list[dict]]:
     messages: list[dict] = [{"role": "user", "content": instruction}]
     pending: list[dict] = []
     final_text = ""
+    finished = False
 
     for _ in range(MAX_ITERATIONS):
         response = client.messages.create(
@@ -248,6 +254,7 @@ def run_agent(instruction: str) -> tuple[str, list[dict]]:
             final_text = text
 
         if getattr(response, "stop_reason", None) != "tool_use":
+            finished = True
             break
 
         messages.append({"role": "assistant", "content": response.content})
@@ -262,7 +269,26 @@ def run_agent(instruction: str) -> tuple[str, list[dict]]:
         ]
         messages.append({"role": "user", "content": tool_results})
 
+    if not finished:
+        # The cap was hit mid-tool-loop, so final_text is at best interim narration
+        # ("let me analyze…"). Force one tool-free turn to synthesize a real answer from
+        # what was already gathered, rather than returning that dangling preamble.
+        final_text = _force_final_answer(client, messages) or final_text or CAP_FALLBACK
+
     return final_text.strip(), pending
+
+
+def _force_final_answer(client: Anthropic, messages: list[dict]) -> str:
+    """One tool-disabled turn so the model answers from gathered context after the cap."""
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=MAX_TOKENS,
+        system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+        tools=TOOLS,
+        tool_choice={"type": "none"},
+        messages=messages,
+    )
+    return _collect_text(response.content)
 
 
 # --- Mutating action execution (run only after user approval) ------------------
