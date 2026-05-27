@@ -230,7 +230,15 @@ A senior-QA test pass of the live Telegram bot (driven through Telegram Web) exe
 - #53 true received-time ordering would need a parsed/ISO received timestamp stored on ingest.
 - #52 could parallelize the three tone generations to actually shorten the wait.
 
-Final suite after all merges: **261 passing, ~94% coverage.**
+**Second pass (2026-05-25):** A follow-up QA run via the `qa-test-telegram-bot` skill exercised all eight test suites (functional, edge cases, push, concurrency, recovery, integration, security, UX) and surfaced one medium finding plus three low cosmetic ones. The medium was filed and fixed:
+
+| Issue | PR | Fix |
+|---|---|---|
+| [#61](https://github.com/H1shamM/ai-email-copilot/issues/61) | [#62](https://github.com/H1shamM/ai-email-copilot/pull/62) | `/agent` no longer returns an interim preamble when `run_agent` hits `MAX_ITERATIONS` mid-tool-loop — a tool-disabled (`tool_choice: none`) synthesis turn now runs, with an explicit `CAP_FALLBACK` if even that yields no text. Limits bumped (`MAX_TOKENS` 1024→2048, `MAX_ITERATIONS` 5→8) and the "🤖 Working on it…" status message is deleted once the result is ready, so it no longer lingers. |
+
+Three lows left unfiled (raw `##`/`**` Markdown in agent replies; minor inconsistency between `/reply -1` "Usage" vs `/reply 0` "No email with id 0"; no rate-limiting on rapid identical commands — acceptable for single-user). Prompt-injection attempts via `/agent` were refused cleanly; no internals leaked.
+
+Final suite after all merges: **263 passing, ~94% coverage.**
 
 ---
 
@@ -344,5 +352,5 @@ claude "Start Week 3 Task 1: Draft Reply Generation. Create feature branch and i
 
 ---
 
-**Last Updated:** 2026-05-25  
-**Current Focus:** Week 5 (Agentic) + Week 6-C (observability); QA hardening pass complete
+**Last Updated:** 2026-05-27  
+**Current Focus:** Week 5 (Agentic) + Week 6-C (observability); QA hardening pass complete (incl. follow-up agent fix)
