@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, Header, HTTPException, Query, Request  # noqa: E402
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request  # noqa: E402
 
 from app.gmail.service import get_recent_emails  # noqa: E402
 from app.ai.analyzer import analyze_email  # noqa: E402
@@ -66,15 +66,23 @@ async def shutdown():
 @app.post("/telegram/webhook")
 async def telegram_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ):
-    """Receive updates from Telegram and dispatch through the bot Application."""
+    """Receive updates from Telegram and dispatch through the bot Application.
+
+    Dispatch runs in a background task so we return 200 immediately. Telegram
+    retries webhook delivery after ~60s without a 200 response, which during a
+    long-running /agent run caused a duplicate command execution (a second
+    "🤖 Working on it…" message plus doubled Anthropic API load that worsened
+    rate-limit pressure).
+    """
     expected_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET")
     if expected_secret and x_telegram_bot_api_secret_token != expected_secret:
         raise HTTPException(status_code=403, detail="Invalid secret token")
 
     payload = await request.json()
-    await telegram_bot.process_update_from_json(payload)
+    background_tasks.add_task(telegram_bot.process_update_from_json, payload)
     return {"ok": True}
 
 
