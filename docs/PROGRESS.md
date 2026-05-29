@@ -188,8 +188,9 @@ The browser flow now lists Calendar alongside the Gmail scopes — grant it. Sub
 - Smoke-check on `/health` after restart with 3 retries.
 - Rollback documented: Actions UI → previous successful run → *Re-run all jobs*.
 
-**Bug caught during the live setup** (runbook patched in main):
+**Bugs caught during the live setup** (workflow + runbook patched in main):
 - `ec379b8` — PowerShell parses `$ACCOUNT_ID:oidc-provider/...` as scope-modifier syntax, leaking an empty account ID into the Federated ARN. Switched the runbook to `${ACCOUNT_ID}` curly-brace form and added `Get-Content` sanity-checks.
+- [PR #64](https://github.com/H1shamM/ai-email-copilot/pull/64) (`01a52c5`) — when an SSM deploy command ends in `Failed`/`Cancelled`/`TimedOut`, the workflow only dumped `StandardErrorContent`, which was empty for shell-chain failures that wrote the trace to stdout (e.g. `cd nonexistent`). Now dumps stdout alongside stderr so failures are diagnosable from the Actions log.
 
 **Follow-ups noted but not blocking:**
 - Node 20 deprecation warning on `aws-actions/configure-aws-credentials@v4`. Bumping to v5 (or opting into Node 24) before Sept 2026.
@@ -352,5 +353,5 @@ claude "Start Week 3 Task 1: Draft Reply Generation. Create feature branch and i
 
 ---
 
-**Last Updated:** 2026-05-27  
+**Last Updated:** 2026-05-29  
 **Current Focus:** Week 5 (Agentic) + Week 6-C (observability); QA hardening pass complete (incl. follow-up agent fix)
