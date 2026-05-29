@@ -236,6 +236,22 @@ aws s3 rm s3://$env:S3_BOOTSTRAP_BUCKET/token.pickle
 aws s3api delete-bucket --bucket $env:S3_BOOTSTRAP_BUCKET --region $env:AWS_REGION
 ```
 
+### Refresh in place (the common case)
+
+Once the bucket from first-time bootstrap is gone, use the one-shot script to
+re-auth locally + push the new `token.pickle` via SSM (no S3 round-trip):
+
+```powershell
+.\scripts\refresh-token.ps1
+```
+
+The script: deletes the stale local `token.pickle`, runs the OAuth browser flow,
+base64-encodes the fresh token, sends it via `aws ssm send-command` to be decoded
+and atomically swapped on the instance, restarts `copilot`, then smoke-checks
+`/health`. **Run this whenever the OAuth health monitor DMs you** about a revoked
+token, and as a Demo Day / pre-event pre-flight (Google Testing-app refresh
+tokens expire ~7 days after issuance regardless of activity).
+
 ---
 
 ## Step 11 — Caddy reverse proxy (on the instance)
@@ -521,7 +537,7 @@ aws iam delete-role --role-name copilot-github-deploy
 | `getWebhookInfo` shows `last_error_message: SSL handshake failed` | Caddy hasn't issued the cert yet | Wait 60s; check `journalctl -u caddy` for ACME errors |
 | `journalctl -u copilot` shows `telegram.error.TimedOut` | Cold-start TLS slowness | Already handled by `bot.py`'s 30s `HTTPXRequest` timeout (#25) |
 | Bot misses ticks under network flakiness | Was the synchronous-blocking issue | Already fixed in #27 — push tick uses `asyncio.to_thread` |
-| `journalctl -u copilot` shows `invalid_grant` for Gmail | Google revoked the refresh token (Testing app, ~7 days idle) | Re-run OAuth on laptop, re-bootstrap `token.pickle` per Step 10. Long-term fix: publish the OAuth app or move it to External + Production status |
+| `journalctl -u copilot` shows `invalid_grant` for Gmail (or the OAuth health monitor DMs you) | Google revoked the refresh token (Testing app, ~7 days from issuance) | Run `.\scripts\refresh-token.ps1` on the laptop. Long-term fix: publish the OAuth app to External + Production status |
 | Deploy workflow fails with `Could not assume role` | OIDC trust policy doesn't match the workflow's `:sub` claim | Check the role's trust policy: it must list the exact repo + branch (`repo:OWNER/REPO:ref:refs/heads/main`). A fork or a non-`main` branch can't assume |
 | Deploy workflow fails on `Smoke-check /health` after `SSM command succeeded` | uvicorn started but the app errored at runtime; previous version is gone | `aws ssm start-session --target $INSTANCE_ID` then `journalctl -u copilot -n 200`. To restore the previous good commit, re-run that workflow in the Actions UI |
 
