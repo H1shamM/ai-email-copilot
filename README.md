@@ -1,5 +1,7 @@
 # AI Email Copilot
 
+> **Function Calling + Agentic Flow over Gmail, Calendar, and SQLite — with approve-before-act at every external boundary.**
+
 A personal Gmail assistant you drive entirely from Telegram. It reads and triages your
 inbox with Claude, drafts replies in your chosen tone, turns meeting requests into calendar
 events, and — with the `/agent` command — takes a single natural-language instruction,
@@ -31,9 +33,11 @@ request — Function Calling and Agentic Flow working together, with a human in 
 
 ## Demo
 
-🎥 **Walkthrough video:** _coming soon_
+![/agent refusing a prompt-injection attempt — system prompt, API key, and token.pickle all denied; the bot responds with its actual capabilities instead](docs/assets/demo.png)
 
-<!-- TODO: add a short screen-recording GIF (docs/assets/demo.gif) of the /agent flow and embed it here. -->
+> A live `/agent` exchange: the user tries to extract the system prompt, API key, and `token.pickle` via prompt injection; the agent declines and pivots to its real capabilities.
+
+🎥 **Walkthrough video:** _coming soon_
 
 Try it from any Telegram chat with the bot:
 
@@ -56,7 +60,7 @@ the proposed **send** + **create event** actions behind ✅ Approve / ✖ Cancel
 - **Structured AI analysis** — every email gets a category, sentiment, urgency score, and
   suggested action; meeting requests get natural-language date resolution.
 - **Proactive push** — a scheduler notifies you about high-urgency mail without polling.
-- **Production-grade engineering** — single-user auth, ≥80% test coverage (currently ~92%),
+- **Production-grade engineering** — single-user auth, **263 unit tests at ~94% coverage**,
   CI on every PR, and one-command auto-deploy to AWS.
 
 ## Architecture
@@ -215,3 +219,16 @@ docs/                  ARCHITECTURE, PRD, PROGRESS, workflow + deploy runbooks
 Week-by-week status and engineering decisions are tracked in
 [`docs/PROGRESS.md`](docs/PROGRESS.md). Shipped: Telegram interface, draft replies, push
 notifications, Calendar integration, the agentic `/agent` flow, and AWS deployment.
+
+Next:
+- Deterministic priority scoring + `/triage` exposed as an agent tool
+- Follow-up tracker with scheduled reminder pings
+- CloudWatch logs + alarms and an enriched `/health` endpoint for production observability
+
+---
+
+## Author
+
+**Hisham Murad** — built as the capstone for the Growth Lab Generative-AI accelerator.
+
+[LinkedIn](https://www.linkedin.com/in/hisham-murad/) · hishammorad42@gmail.com
