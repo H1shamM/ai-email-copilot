@@ -95,7 +95,7 @@ sequenceDiagram
 
     U->>B: /agent "reply to Alice and schedule it"
     B->>A: run_agent(instruction)
-    loop until end_turn (max 5 rounds)
+    loop until end_turn (max 8 rounds)
         A->>C: messages.create(tools=…)
         alt read-only tool_use
             C-->>A: list / get / analyze / draft_reply
