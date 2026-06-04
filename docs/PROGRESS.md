@@ -243,6 +243,21 @@ Final suite after all merges: **263 passing, ~94% coverage.**
 
 ---
 
+## 🔒 CI Security Scanning (2026-06-04)
+
+Added three complementary security gates alongside the existing Lint + Tests workflows ([#65](https://github.com/H1shamM/ai-email-copilot/issues/65) / PR [#66](https://github.com/H1shamM/ai-email-copilot/pull/66)):
+
+- **Bandit** (Python SAST) — `.github/workflows/security.yml`, scans `app/` at medium+ severity (`-ll`); required gate. Two intentional `B301` pickle loads in `app/gmail/auth.py` (app-written, local `token.pickle`) suppressed with documented `# nosec B301`.
+- **Dependabot** — `.github/dependabot.yml`, weekly `pip` + `github-actions` update PRs (grouped, limit 5) plus CVE alerts.
+- **Trivy** — filesystem `vuln,secret,misconfig` scan for HIGH/CRITICAL in the same workflow; **report-only** (`exit-code: 0`) for now.
+
+**Follow-ups (not blocking):**
+- Enable Dependabot alerts in repo **Settings → Code security** (manual, one-time).
+- Flip Trivy to a gate (`exit-code: 1`) once the first scan's HIGH/CRITICAL backlog is triaged.
+- `aquasecurity/trivy-action` tags carry a `v` prefix (`@v0.36.0`) — the bare form does not resolve.
+
+---
+
 ## 📋 Week 6 (original): UI & Demo - SUPERSEDED
 
 Original goals (production UI + demo video + elevator pitch) were absorbed into Week 3's Telegram pivot. This slot is now Week 6 = Deployment.
