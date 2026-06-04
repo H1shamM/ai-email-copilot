@@ -125,6 +125,12 @@ By end of week, must demonstrate:
 - ✅ **Story W4-C** ([#38](https://github.com/H1shamM/ai-email-copilot/issues/38) / PR [#39](https://github.com/H1shamM/ai-email-copilot/pull/39)) — Telegram `/schedule` flow (list-only) with approve-before-create + block-on-conflict free/busy check; new `app/calendar/scheduler.py` orchestration
 - ✅ **Event thread context** (post-Demo-Day) ([#72](https://github.com/H1shamM/ai-email-copilot/issues/72) / PR [#73](https://github.com/H1shamM/ai-email-copilot/pull/73)) — booked events now carry a `description` = email `ai_summary` + Gmail deep link (`#all/<thread_id>`), so each meeting is self-explanatory on the calendar. First quick win on the **inbox-native scheduling ("Calendly replacement")** direction surfaced at Demo Day. Next on that track: `/today` agenda digest, then availability-negotiation drafts (Week 5 agentic).
 
+#### Calendar QA pass (2026-06-04) — bugs found via live Chrome-MCP test + injected mock meetings
+- ✅ **Detection gate too strict** ([#74](https://github.com/H1shamM/ai-email-copilot/issues/74) / PR [#75](https://github.com/H1shamM/ai-email-copilot/pull/75)) — `maybe_detect_meeting` only fired on `action_required == "Schedule"`, but the analyzer tags most meeting invites `Reply` → silently dropped. Now gates on `{Schedule, Reply}` with the detector's `is_meeting`+confidence as the authority.
+- ✅ **`/schedule` Create failed silently** ([#76](https://github.com/H1shamM/ai-email-copilot/issues/76) / PR [#78](https://github.com/H1shamM/ai-email-copilot/pull/78)) — the freebusy `has_conflict()` call ran outside the try/except, so a Calendar API error (here: **Calendar API disabled in GCP project `707808781459`** — needs enabling in the console) escaped into the background webhook task and the user got no feedback. Guarded the conflict check (`Create failed: <exc>`, status left retryable) + added a global `add_error_handler` safety net.
+- 🔲 **Stale past-dated `/schedule` entries** ([#77](https://github.com/H1shamM/ai-email-copilot/issues/77)) — `schedule_command` lists detected events with no past-date filter; old detections (e.g. May 28, Jun 1) re-appear forever. Open.
+- ⚠️ **Action item (user):** enable the Google Calendar API for the GCP project so `/schedule` Create can actually book events.
+
 ### Re-auth required after Story W4-A merges
 
 Adding `https://www.googleapis.com/auth/calendar` to `SCOPES` invalidates any existing `token.pickle`. After pulling the merged change:
