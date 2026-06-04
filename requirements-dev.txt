@@ -5,3 +5,4 @@ pytest-asyncio
 black
 flake8
 mypy
+bandit

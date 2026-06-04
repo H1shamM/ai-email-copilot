@@ -22,7 +22,8 @@ def get_credentials():
 
     if os.path.exists("token.pickle"):
         with open("token.pickle", "rb") as token:
-            creds = pickle.load(token)
+            # token.pickle is written by this app on the local host; not untrusted input.
+            creds = pickle.load(token)  # nosec B301
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
@@ -54,7 +55,7 @@ def gmail_token_status() -> tuple[bool, str]:
         return False, "no token.pickle"
     try:
         with open("token.pickle", "rb") as token:
-            creds = pickle.load(token)
+            creds = pickle.load(token)  # nosec B301
     except Exception as exc:  # noqa: BLE001 — corrupt/unreadable token file
         return False, f"unreadable token.pickle: {exc}"
 
