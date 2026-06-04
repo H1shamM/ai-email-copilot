@@ -180,11 +180,15 @@ async def test_inbox_lists_analyzed_rows(monkeypatch, authorized_update):
     assert "alice@example\\.com" in text
     assert "bob@example\\.com" in text
     assert "skip@example\\.com" not in text
-    assert "\\#4" in text  # row ids visible so /email target is obvious
+    assert "\\#4" in text  # row ids visible on the cards
     assert "\\#6" in text
     assert "🔴" in text
     assert "🟢" in text
-    assert "/email" in text  # footer points to the detail view
+    assert "tap a button" in text.lower()  # footer points to the tap-to-open buttons
+    # tap-to-open keyboard carries one view button per analyzed email
+    markup = authorized_update.message.reply_text.await_args_list[-1].kwargs["reply_markup"]
+    callbacks = {b.callback_data for kb_row in markup.inline_keyboard for b in kb_row}
+    assert callbacks == {"e:view:4", "e:view:6"}
 
 
 @pytest.mark.asyncio
@@ -247,6 +251,25 @@ async def test_email_command_shows_detail_with_buttons(
     assert any("Reply" in label for label in labels)
     assert any("Done" in label for label in labels)
     assert any(b.url and "th1" in b.url for b in buttons)  # Open-in-Gmail link
+
+
+@pytest.mark.asyncio
+async def test_cb_email_view_opens_detail(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    row = {
+        "id": 6,
+        "sender": "Boss <b@c.com>",
+        "subject": "Hi",
+        "ai_summary": "s",
+        "thread_id": "t",
+    }
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: row)
+    update = _make_callback_update("e:view:6")
+    await handlers.cb_email_view(update, reply_context)
+    sent = update.effective_chat.send_message.await_args_list[-1]
+    assert "Hi" in sent.args[0]
+    assert "reply_markup" in sent.kwargs  # detail view carries its action keyboard
 
 
 @pytest.mark.asyncio

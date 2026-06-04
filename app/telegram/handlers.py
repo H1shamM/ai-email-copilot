@@ -155,18 +155,29 @@ async def _safe_delete(message) -> None:
         logger.debug("status message delete failed; leaving it in place")
 
 
-async def _send_chunks(update: Update, blocks: list[str], empty_message: str) -> None:
-    """Render blocks via chunk_messages and send each as MarkdownV2."""
+async def _send_chunks(
+    update: Update,
+    blocks: list[str],
+    empty_message: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
+    """Render blocks via chunk_messages and send each as MarkdownV2.
+
+    `reply_markup`, when given, is attached to the LAST chunk (e.g. the tap-to-open
+    button grid under a /inbox list).
+    """
     if not blocks:
         await update.message.reply_text(empty_message)
         return
-    for chunk in chunk_messages(blocks):
+    chunks = chunk_messages(blocks)
+    for i, chunk in enumerate(chunks):
         # Disable previews so a URL in a summary/snippet doesn't balloon into a
         # full-width image that hijacks the list.
         await update.message.reply_text(
             chunk,
             parse_mode=ParseMode.MARKDOWN_V2,
             link_preview_options=LinkPreviewOptions(is_disabled=True),
+            reply_markup=reply_markup if i == len(chunks) - 1 else None,
         )
 
 
@@ -238,9 +249,21 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _send_chunks(update, blocks, "No emails to analyze.")
 
 
+def _build_inbox_keyboard(rows: list[dict]) -> InlineKeyboardMarkup | None:
+    """A tap-to-open button per analyzed email, two per row; None if empty."""
+    buttons = [
+        InlineKeyboardButton(f"📖 #{row['id']}", callback_data=f"e:view:{row['id']}")
+        for row in rows
+    ]
+    if not buttons:
+        return None
+    grid = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
+    return InlineKeyboardMarkup(grid)
+
+
 @authorized_only
 async def inbox(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show the most recent analyzed emails from the DB with priority indicators."""
+    """Show the most recent analyzed emails from the DB with tap-to-open buttons."""
     await _typing(update)
     limit = _list_limit(context, INBOX_DEFAULT_LIMIT)
     rows = db.get_recent_emails(limit=limit)
@@ -248,14 +271,14 @@ async def inbox(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     blocks = [format_inbox_entry(row) for row in analyzed]
     if blocks:
         total = db.count_analyzed_emails()
-        footer = f"Showing {len(analyzed)} of {total} · open one with /email <id>"
+        footer = f"Showing {len(analyzed)} of {total} · tap a button below to open"
         if total > len(analyzed) and limit < LIST_MAX_LIMIT:
             footer = (
                 f"Showing {len(analyzed)} of {total} · /inbox {min(limit * 2, LIST_MAX_LIMIT)} "
-                f"for more · open one with /email <id>"
+                f"for more · tap a button below to open"
             )
         blocks.append(escape_markdown_v2(footer))
-    await _send_chunks(update, blocks, "No analyzed emails yet.")
+    await _send_chunks(update, blocks, "No analyzed emails yet.", _build_inbox_keyboard(analyzed))
 
 
 def _build_email_detail_keyboard(row: dict) -> InlineKeyboardMarkup:
@@ -275,6 +298,16 @@ def _build_email_detail_keyboard(row: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([buttons])
 
 
+async def _send_email_detail(chat, row: dict) -> None:
+    """Send the full detail view for one email row with its action keyboard."""
+    await chat.send_message(
+        format_email_detail(row),
+        parse_mode=ParseMode.MARKDOWN_V2,
+        reply_markup=_build_email_detail_keyboard(row),
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
+    )
+
+
 @authorized_only
 async def email_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """`/email <id>` — open one email in full with Reply / Done / Open-in-Gmail."""
@@ -286,12 +319,22 @@ async def email_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not row:
         await update.effective_chat.send_message(f"No email with id {args[0]}.")
         return
-    await update.effective_chat.send_message(
-        format_email_detail(row),
-        parse_mode=ParseMode.MARKDOWN_V2,
-        reply_markup=_build_email_detail_keyboard(row),
-        link_preview_options=LinkPreviewOptions(is_disabled=True),
-    )
+    await _send_email_detail(update.effective_chat, row)
+
+
+@authorized_only
+async def cb_email_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Tap an /inbox button → open that email's full detail view."""
+    query = update.callback_query
+    await query.answer("Opening…")
+    parsed = _parse_callback(query.data or "", prefix="e")
+    if parsed is None or parsed[0] != "view":
+        return
+    row = db.get_email_by_row_id(parsed[1])
+    if not row:
+        await update.effective_chat.send_message(f"No email with id {parsed[1]}.")
+        return
+    await _send_email_detail(update.effective_chat, row)
 
 
 _REPLY_TONES = ("professional", "friendly", "brief")
@@ -810,6 +853,7 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(cb_notify_done, pattern=r"^n:done:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_schedule_create, pattern=r"^s:create:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_schedule_skip, pattern=r"^s:skip:\d+$"))
+    application.add_handler(CallbackQueryHandler(cb_email_view, pattern=r"^e:view:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_email_reply, pattern=r"^e:reply:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_email_done, pattern=r"^e:done:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_agent_approve, pattern=r"^a:approve$"))
