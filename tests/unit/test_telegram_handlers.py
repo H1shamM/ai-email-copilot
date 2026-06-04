@@ -1049,6 +1049,72 @@ async def test_cb_schedule_create_idempotent_when_already_created(monkeypatch, r
 
 
 @pytest.mark.asyncio
+async def test_cb_schedule_create_surfaces_conflict_check_error(monkeypatch, reply_context):
+    """A Calendar error in the freebusy check must reach the user, not vanish."""
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    monkeypatch.setattr(handlers.db, "get_calendar_event_by_id", lambda _: _detected_event())
+
+    def boom(_):
+        raise RuntimeError("Calendar API disabled")
+
+    monkeypatch.setattr(handlers.scheduler, "has_conflict", boom)
+
+    create_called = False
+
+    def _create(*_a):
+        nonlocal create_called
+        create_called = True
+        return "x"
+
+    monkeypatch.setattr(handlers.scheduler, "create_event", _create)
+    status_calls: list[tuple] = []
+    monkeypatch.setattr(
+        handlers.db, "update_calendar_event_status", lambda *a, **k: status_calls.append((a, k))
+    )
+
+    update = _make_callback_update("s:create:3")
+    await handlers.cb_schedule_create(update, reply_context)
+
+    assert create_called is False  # never reached the insert
+    assert status_calls == []  # status left 'detected' so the user can retry
+    assert "Create failed" in update.effective_chat.send_message.await_args_list[-1].args[0]
+
+
+@pytest.mark.asyncio
+async def test_on_error_notifies_originating_chat():
+    update = MagicMock()
+    update.effective_chat.id = 42
+    context = MagicMock()
+    context.error = RuntimeError("boom")
+    context.bot.send_message = AsyncMock()
+
+    await handlers.on_error(update, context)
+
+    context.bot.send_message.assert_awaited_once()
+    assert context.bot.send_message.await_args.args[0] == 42
+
+
+@pytest.mark.asyncio
+async def test_on_error_noop_without_chat():
+    update = MagicMock()
+    update.effective_chat = None
+    context = MagicMock()
+    context.error = RuntimeError("boom")
+    context.bot.send_message = AsyncMock()
+
+    await handlers.on_error(update, context)
+
+    context.bot.send_message.assert_not_called()
+
+
+def test_register_adds_error_handler():
+    app = MagicMock()
+    handlers.register(app)
+    app.add_error_handler.assert_called_once_with(handlers.on_error)
+
+
+@pytest.mark.asyncio
 async def test_cb_schedule_skip_marks_skipped(monkeypatch, reply_context):
     monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
     monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})

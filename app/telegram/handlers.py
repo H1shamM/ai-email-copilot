@@ -554,7 +554,17 @@ async def cb_schedule_create(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.effective_chat.send_message(f"Event already {event['status']}.")
         return
 
-    if scheduler.has_conflict(event):
+    # The freebusy call hits the Calendar API and can 403/timeout. It sits before
+    # the insert try/except, so guard it here — otherwise the error escapes into the
+    # background webhook task and the user gets no feedback at all. Status is left
+    # `detected` so the user can retry once the underlying issue is resolved.
+    try:
+        conflict = scheduler.has_conflict(event)
+    except Exception as exc:  # noqa: BLE001 — surface the calendar failure to the user
+        logger.exception("Conflict check failed for event=%s", event_id)
+        await update.effective_chat.send_message(f"Create failed: {exc}")
+        return
+    if conflict:
         await update.effective_chat.send_message(
             "⚠ Conflicts with an existing calendar event — not created. "
             "Tap Skip, or free up the slot and try again."
@@ -711,3 +721,21 @@ def register(application: Application) -> None:
     # an unrecognized /command, then any plain (non-command) text.
     application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_text))
+
+    application.add_error_handler(on_error)
+
+
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Last-resort handler: a crash in any handler must reach the user, not vanish.
+
+    Webhook updates are dispatched in a background task, so an unguarded exception
+    would only be logged server-side. This notifies the originating chat instead.
+    """
+    logger.error("Unhandled error processing update", exc_info=context.error)
+    chat = getattr(getattr(update, "effective_chat", None), "id", None)
+    if chat is None:
+        return
+    try:
+        await context.bot.send_message(chat, "⚠ Something went wrong — the error was logged.")
+    except Exception:  # noqa: BLE001 — never let the error handler raise
+        logger.exception("Failed to send error notice to chat=%s", chat)
