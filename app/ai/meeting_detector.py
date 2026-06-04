@@ -34,9 +34,10 @@ Received: {received}
 Body: {body}
 
 Resolve any natural-language dates (e.g. "next Tuesday at 3pm") against the
-Received date above. Always return ISO-8601 UTC for proposed_datetime, or null
-if no date can be confidently extracted. If the email is NOT a meeting/event
-request (e.g. it's a newsletter, FYI, or pure information), set is_meeting=false.
+Received date above. Return proposed_datetime in ISO-8601 using the date and time
+exactly as written in the email — do NOT convert time zones — or null if no date
+can be confidently extracted. If the email is NOT a meeting/event request (e.g.
+it's a newsletter, FYI, or pure information), set is_meeting=false.
 
 Respond ONLY with valid JSON (no markdown fences):
 {{
