@@ -1,14 +1,58 @@
 """Tests for app/telegram/formatting.py — escaping, renderers, chunking."""
 
+from datetime import datetime
+
 from app.telegram.formatting import (
     chunk_messages,
     escape_markdown_v2,
     format_analysis_entry,
+    format_email_detail,
     format_inbox_entry,
     format_notification,
     format_unread_entry,
     sender_display_name,
 )
+from app.telegram import formatting
+
+
+def test_short_time_today_shows_clock(monkeypatch):
+    now = datetime(2026, 5, 10, 18, 0, 0)
+    assert formatting._short_time("Sun, 10 May 2026 09:30:00 +0000", now=now) == "09:30"
+
+
+def test_short_time_other_day_shows_date(monkeypatch):
+    now = datetime(2026, 5, 12, 0, 0, 0)
+    assert formatting._short_time("Sun, 10 May 2026 09:30:00 +0000", now=now) == "10 May"
+
+
+def test_short_time_unparseable_returns_empty():
+    assert formatting._short_time("not a date") == ""
+    assert formatting._short_time(None) == ""
+
+
+def test_format_inbox_entry_shows_action_glyph():
+    row = {"id": 1, "sender": "A", "subject": "s", "ai_summary": "x", "action_required": "Schedule"}
+    assert "📅" in format_inbox_entry(row)
+
+
+def test_format_email_detail_has_full_fields_and_no_truncation():
+    row = {
+        "id": 9,
+        "sender": "Boss <boss@corp.com>",
+        "subject": "Q3 plan",
+        "ai_summary": "y" * 200,
+        "urgency_score": 9,
+        "category": "Work",
+        "action_required": "Reply",
+        "received_date": "Mon, 10 May 2026 09:00:00 +0000",
+    }
+    block = format_email_detail(row)
+    assert "*\\#9*" in block
+    assert "boss@corp\\.com" in block  # full address kept in detail
+    assert "Work" in block
+    assert "y" * 200 in block  # summary NOT truncated in the detail view
+    assert "…" not in block
+    assert "✉️ *Q3 plan*" in block
 
 
 def test_sender_display_name_prefers_display_name():
