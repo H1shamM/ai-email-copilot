@@ -5,7 +5,13 @@ import logging
 import os
 from functools import wraps
 
-from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    BotCommand,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    LinkPreviewOptions,
+    Update,
+)
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
     Application,
@@ -150,7 +156,13 @@ async def _send_chunks(update: Update, blocks: list[str], empty_message: str) ->
         await update.message.reply_text(empty_message)
         return
     for chunk in chunk_messages(blocks):
-        await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN_V2)
+        # Disable previews so a URL in a summary/snippet doesn't balloon into a
+        # full-width image that hijacks the list.
+        await update.message.reply_text(
+            chunk,
+            parse_mode=ParseMode.MARKDOWN_V2,
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
+        )
 
 
 @authorized_only
