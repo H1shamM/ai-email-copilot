@@ -561,8 +561,9 @@ async def cb_schedule_create(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
 
+    source_email = db.get_email_by_row_id(event["email_id"])
     try:
-        google_event_id = scheduler.create_event(event)
+        google_event_id = scheduler.create_event(event, source_email)
     except Exception as exc:  # noqa: BLE001 — surface a generic failure to the user
         logger.exception("Calendar insert failed for event=%s", event_id)
         db.update_calendar_event_status(event_id, "failed")
