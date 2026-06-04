@@ -35,7 +35,7 @@ jobs:
       # exit-code: 0 keeps this report-only for the initial rollout. Flip to 1
       # (gate the build) once the first run's HIGH/CRITICAL backlog is triaged — see #65.
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           scan-type: "fs"
           scan-ref: "."
