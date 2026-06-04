@@ -132,6 +132,9 @@ By end of week, must demonstrate:
 - 🔲 **Stale past-dated `/schedule` entries** ([#77](https://github.com/H1shamM/ai-email-copilot/issues/77)) — `schedule_command` lists detected events with no past-date filter; old detections (e.g. May 28, Jun 1) re-appear forever. Open.
 - ⚠️ **Action items (user):** (1) Calendar API enabled ✅; (2) set `USER_TIMEZONE=Asia/Jerusalem` on the server for correct meeting times.
 
+#### Bot UX pass (2026-06-04) — `/inbox` + `/unread` readability
+- ✅ **Hard-to-read lists** ([#81](https://github.com/H1shamM/ai-email-copilot/issues/81) / PR [#82](https://github.com/H1shamM/ai-email-copilot/pull/82)) — found via live Chrome-MCP test: raw `Name <addr>` auto-linked + wrapped, URLs in summaries ballooned into full-width preview images, full multi-sentence summaries made each row a paragraph. Fix: `sender_display_name` (drop `<addr>`), truncation, 3-line card (priority+id+name / ✉️ subject / ↳ one-line summary), and `LinkPreviewOptions(is_disabled=True)` in `_send_chunks` (also helps `/analyze`). Verified live. Follow-up: apply `sender_display_name` to `/analyze` + push notifications for consistency.
+
 ### Re-auth required after Story W4-A merges
 
 Adding `https://www.googleapis.com/auth/calendar` to `SCOPES` invalidates any existing `token.pickle`. After pulling the merged change:
