@@ -8,5 +8,5 @@ anthropic
 pydantic
 python-dateutil
 httpx
-python-telegram-bot>=21.0
-apscheduler>=3.10
+python-telegram-bot>=22.7
+apscheduler>=3.11.2
