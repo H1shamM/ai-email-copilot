@@ -10,7 +10,7 @@ jobs:
   bandit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -30,7 +30,7 @@ jobs:
   trivy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # exit-code: 0 keeps this report-only for the initial rollout. Flip to 1
       # (gate the build) once the first run's HIGH/CRITICAL backlog is triaged — see #65.
