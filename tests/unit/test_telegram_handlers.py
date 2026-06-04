@@ -902,6 +902,7 @@ def _detected_event(**overrides) -> dict:
     """A detected calendar_events row with a concrete date+time."""
     base = {
         "id": 3,
+        "email_id": 5,
         "title": "Sync with Alice",
         "event_date": "2026-05-19",
         "event_time": "15:00:00",
@@ -947,7 +948,14 @@ async def test_cb_schedule_create_free_window_creates(monkeypatch, reply_context
     monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
     monkeypatch.setattr(handlers.db, "get_calendar_event_by_id", lambda _: _detected_event())
     monkeypatch.setattr(handlers.scheduler, "has_conflict", lambda _: False)
-    monkeypatch.setattr(handlers.scheduler, "create_event", lambda _: "goog_evt_99")
+    source_email = {"id": 5, "ai_summary": "Q3 sync", "thread_id": "t1"}
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: source_email)
+    create_args: dict = {}
+    monkeypatch.setattr(
+        handlers.scheduler,
+        "create_event",
+        lambda event, email=None: create_args.update(event=event, email=email) or "goog_evt_99",
+    )
     status_calls: list[tuple] = []
     monkeypatch.setattr(
         handlers.db,
@@ -960,6 +968,7 @@ async def test_cb_schedule_create_free_window_creates(monkeypatch, reply_context
 
     assert status_calls == [(3, "created", {"google_event_id": "goog_evt_99"})]
     assert "Event created" in update.effective_chat.send_message.await_args_list[-1].args[0]
+    assert create_args["email"] is source_email  # source email threaded to the booked event
 
 
 @pytest.mark.asyncio
@@ -971,7 +980,7 @@ async def test_cb_schedule_create_conflict_blocks(monkeypatch, reply_context):
 
     create_called = False
 
-    def _boom(_):
+    def _boom(*_a):
         nonlocal create_called
         create_called = True
         return "x"
@@ -999,7 +1008,7 @@ async def test_cb_schedule_create_api_failure_marks_failed(monkeypatch, reply_co
     monkeypatch.setattr(handlers.db, "get_calendar_event_by_id", lambda _: _detected_event())
     monkeypatch.setattr(handlers.scheduler, "has_conflict", lambda _: False)
 
-    def boom(_):
+    def boom(*_a):
         raise RuntimeError("calendar 500")
 
     monkeypatch.setattr(handlers.scheduler, "create_event", boom)
@@ -1026,7 +1035,7 @@ async def test_cb_schedule_create_idempotent_when_already_created(monkeypatch, r
     )
     create_called = False
 
-    def _boom(_):
+    def _boom(*_a):
         nonlocal create_called
         create_called = True
         return "x"

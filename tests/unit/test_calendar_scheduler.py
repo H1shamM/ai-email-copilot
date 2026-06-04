@@ -63,6 +63,38 @@ def test_build_event_body_raises_without_window():
         scheduler.build_event_body(_row(event_time=None))
 
 
+def test_build_event_body_attaches_summary_and_thread_link():
+    email = {"ai_summary": "Alice wants to sync on Q3.", "thread_id": "abc123"}
+    body = scheduler.build_event_body(_row(), email)
+    assert "Alice wants to sync on Q3." in body["description"]
+    assert "https://mail.google.com/mail/u/0/#all/abc123" in body["description"]
+
+
+def test_build_event_body_description_summary_only_when_no_thread():
+    email = {"ai_summary": "Quick chat.", "thread_id": None}
+    body = scheduler.build_event_body(_row(), email)
+    assert body["description"] == "Quick chat."
+    assert "mail.google.com" not in body["description"]
+
+
+def test_build_event_body_omits_description_without_email():
+    assert "description" not in scheduler.build_event_body(_row())
+
+
+def test_build_event_body_omits_description_when_email_empty():
+    email = {"ai_summary": None, "thread_id": None}
+    assert "description" not in scheduler.build_event_body(_row(), email)
+
+
+def test_build_description_link_only_when_no_summary():
+    desc = scheduler.build_description({"ai_summary": "", "thread_id": "t9"})
+    assert desc == "📧 Source thread: https://mail.google.com/mail/u/0/#all/t9"
+
+
+def test_build_description_none_for_none_email():
+    assert scheduler.build_description(None) is None
+
+
 def test_has_conflict_true_when_busy(monkeypatch):
     monkeypatch.setattr(
         scheduler.service,
