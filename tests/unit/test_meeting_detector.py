@@ -169,15 +169,32 @@ def test_maybe_detect_meeting_persists_when_schedule_and_confident(mock_get_clie
 
 
 @patch.object(meeting_detector, "_get_client")
-def test_maybe_detect_meeting_skips_when_action_not_schedule(mock_get_client):
+def test_maybe_detect_meeting_skips_non_schedulable_action(mock_get_client):
+    """Read/Archive/Flag never carry a meeting — detector must not even run."""
     email_row_id = _insert_email("mt_skip_action")
+    email = _email_row(email_row_id)
+
+    new_id = meeting_detector.maybe_detect_meeting(email, {"action_required": "Archive"})
+
+    assert new_id is None
+    mock_get_client.assert_not_called()  # no detector call for non-schedulable actions
+    assert db.get_calendar_event_by_email(email_row_id) == []
+
+
+@patch.object(meeting_detector, "_get_client")
+def test_maybe_detect_meeting_persists_when_reply_and_meeting(mock_get_client):
+    """A meeting request tagged 'Reply' (not 'Schedule') must still be scheduled."""
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = _make_response(_meeting_payload())
+    mock_get_client.return_value = mock_client
+
+    email_row_id = _insert_email("mt_reply_meeting")
     email = _email_row(email_row_id)
 
     new_id = meeting_detector.maybe_detect_meeting(email, {"action_required": "Reply"})
 
-    assert new_id is None
-    assert db.get_calendar_event_by_email(email_row_id) == []
-    mock_get_client.assert_not_called()
+    assert new_id is not None
+    assert len(db.get_calendar_event_by_email(email_row_id)) == 1
 
 
 @patch.object(meeting_detector, "_get_client")

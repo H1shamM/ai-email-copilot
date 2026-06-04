@@ -20,6 +20,11 @@ _client = None
 
 CONFIDENCE_THRESHOLD = 0.6
 
+# A meeting request reliably lands in only these analyzer actions — "needs a reply"
+# and "is a meeting" aren't mutually exclusive, so gating on "Schedule" alone drops
+# real invites. Read/Archive/Flag stay excluded to bound the extra detector calls.
+SCHEDULABLE_ACTIONS = {"Schedule", "Reply"}
+
 MEETING_PROMPT = """Extract meeting/event details from this email and respond with JSON.
 
 EMAIL:
@@ -114,7 +119,7 @@ def maybe_detect_meeting(email_row: dict, analysis: dict) -> int | None:
     Returns the new event row id, or None if nothing was persisted (not a meeting,
     low confidence, detector failure, or already detected).
     """
-    if analysis.get("action_required") != "Schedule":
+    if analysis.get("action_required") not in SCHEDULABLE_ACTIONS:
         return None
     if db.get_calendar_event_by_email(email_row["id"]):
         return None
