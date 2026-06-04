@@ -123,6 +123,7 @@ By end of week, must demonstrate:
 - ✅ **Story W4-A** ([#34](https://github.com/H1shamM/ai-email-copilot/issues/34) / PR [#35](https://github.com/H1shamM/ai-email-copilot/pull/35)) — Calendar OAuth scope + `app/calendar/service.py` wrappers + `calendar_events.status` migration + DB helpers
 - ✅ **Story W4-B** ([#36](https://github.com/H1shamM/ai-email-copilot/issues/36) / PR [#37](https://github.com/H1shamM/ai-email-copilot/pull/37)) — Meeting detection from email body (Claude-driven NL date resolution) + idempotent persistence into `calendar_events`
 - ✅ **Story W4-C** ([#38](https://github.com/H1shamM/ai-email-copilot/issues/38) / PR [#39](https://github.com/H1shamM/ai-email-copilot/pull/39)) — Telegram `/schedule` flow (list-only) with approve-before-create + block-on-conflict free/busy check; new `app/calendar/scheduler.py` orchestration
+- ✅ **Event thread context** (post-Demo-Day) ([#72](https://github.com/H1shamM/ai-email-copilot/issues/72) / PR [#73](https://github.com/H1shamM/ai-email-copilot/pull/73)) — booked events now carry a `description` = email `ai_summary` + Gmail deep link (`#all/<thread_id>`), so each meeting is self-explanatory on the calendar. First quick win on the **inbox-native scheduling ("Calendly replacement")** direction surfaced at Demo Day. Next on that track: `/today` agenda digest, then availability-negotiation drafts (Week 5 agentic).
 
 ### Re-auth required after Story W4-A merges
 
