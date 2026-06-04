@@ -10,3 +10,4 @@ python-dateutil
 httpx
 python-telegram-bot>=22.7
 apscheduler>=3.11.2
+tzdata

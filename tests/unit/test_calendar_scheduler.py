@@ -33,6 +33,20 @@ def test_event_window_defaults_duration_when_null():
     assert end == "2026-05-19T15:30:00Z"  # DEFAULT_DURATION_MINUTES = 30
 
 
+def test_event_window_interprets_time_in_user_timezone(monkeypatch):
+    """A 15:00 wall-clock time in a UTC+3 zone is the 12:00Z absolute instant."""
+    monkeypatch.setenv("USER_TIMEZONE", "Etc/GMT-3")  # fixed UTC+3, no DST
+    start, end = scheduler.event_window(_row())
+    assert start == "2026-05-19T12:00:00Z"
+    assert end == "2026-05-19T13:00:00Z"
+
+
+def test_event_window_unknown_timezone_falls_back_to_utc(monkeypatch):
+    monkeypatch.setenv("USER_TIMEZONE", "Not/AZone")
+    start, _ = scheduler.event_window(_row())
+    assert start == "2026-05-19T15:00:00Z"
+
+
 def test_event_window_none_without_date_or_time():
     assert scheduler.event_window(_row(event_date=None)) is None
     assert scheduler.event_window(_row(event_time=None)) is None

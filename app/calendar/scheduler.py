@@ -6,11 +6,31 @@ layers. The live I/O stays behind `service.py`; everything here is unit-tested b
 mocking `service.check_busy` / `service.insert_event`.
 """
 
+import logging
+import os
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.calendar import service
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_DURATION_MINUTES = 30
+
+
+def _user_tz() -> ZoneInfo:
+    """The timezone a detected wall-clock time is assumed to be in.
+
+    Read lazily so it picks up `load_dotenv()`. Defaults to UTC; an unknown name
+    falls back to UTC rather than crashing the create flow.
+    """
+    name = os.getenv("USER_TIMEZONE", "UTC")
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning("Invalid USER_TIMEZONE=%r; falling back to UTC", name)
+        return ZoneInfo("UTC")
+
 
 _THREAD_URL = "https://mail.google.com/mail/u/0/#all/{thread_id}"
 
@@ -32,7 +52,9 @@ def event_window(event_row: dict) -> tuple[str, str] | None:
     except ValueError:
         return None
     if start.tzinfo is None:
-        start = start.replace(tzinfo=timezone.utc)
+        # The detector stores the wall-clock time as written in the email; interpret
+        # it in the user's timezone, not UTC, so "2 PM" books at 2 PM locally.
+        start = start.replace(tzinfo=_user_tz())
 
     duration = event_row.get("duration_minutes") or DEFAULT_DURATION_MINUTES
     end = start + timedelta(minutes=duration)
