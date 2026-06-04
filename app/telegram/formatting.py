@@ -1,5 +1,7 @@
 """Telegram MarkdownV2 escaping + email/analysis renderers + 4096-char chunking."""
 
+from email.utils import parseaddr
+
 # Per https://core.telegram.org/bots/api#markdownv2-style — these MUST be escaped
 # anywhere they appear in user-supplied text, otherwise the bot API returns
 # "Bad Request: can't parse entities".
@@ -27,12 +29,34 @@ def _priority_emoji(urgency: int | None) -> str:
     return "🟢"
 
 
+def sender_display_name(raw_sender: str | None) -> str:
+    """The human-friendly sender: display name when present, else the bare address.
+
+    Drops the `Name <addr>` duplication that made list rows long and auto-linked.
+    """
+    name, addr = parseaddr(raw_sender or "")
+    return name or addr or (raw_sender or "Unknown sender")
+
+
+def _truncate(text: str, limit: int) -> str:
+    """Trim to `limit` chars with an ellipsis so list rows stay one line each."""
+    text = (text or "").strip()
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+_SUBJECT_LIMIT = 70
+_PREVIEW_LIMIT = 110
+
+
 def format_unread_entry(email: dict, index: int) -> str:
-    """Render one Gmail-fetched email as a numbered MarkdownV2 block."""
-    sender = escape_markdown_v2(email.get("sender") or "Unknown sender")
-    subject = escape_markdown_v2(email.get("subject") or "(no subject)")
-    snippet = escape_markdown_v2(email.get("snippet") or "")
-    return f"*{index}\\.* {sender}\n*Subject:* {subject}\n{snippet}"
+    """Render one Gmail-fetched email as a compact numbered MarkdownV2 card."""
+    name = escape_markdown_v2(sender_display_name(email.get("sender")))
+    subject = escape_markdown_v2(_truncate(email.get("subject") or "(no subject)", _SUBJECT_LIMIT))
+    snippet = escape_markdown_v2(_truncate(email.get("snippet") or "", _PREVIEW_LIMIT))
+    lines = [f"*{index}\\.* *{name}*", f"✉️ {subject}"]
+    if snippet:
+        lines.append(f"   ↳ {snippet}")
+    return "\n".join(lines)
 
 
 def _id_prefix(row: dict) -> str:
@@ -60,12 +84,15 @@ def format_analysis_entry(email: dict, analysis: dict) -> str:
 
 
 def format_inbox_entry(row: dict) -> str:
-    """Render one analyzed-email DB row as a MarkdownV2 block keyed by its row id."""
-    sender = escape_markdown_v2(row.get("sender") or "Unknown sender")
-    subject = escape_markdown_v2(row.get("subject") or "(no subject)")
-    summary = escape_markdown_v2(row.get("ai_summary") or "")
+    """Render one analyzed-email DB row as a compact MarkdownV2 card keyed by row id."""
+    name = escape_markdown_v2(sender_display_name(row.get("sender")))
+    subject = escape_markdown_v2(_truncate(row.get("subject") or "(no subject)", _SUBJECT_LIMIT))
+    summary = escape_markdown_v2(_truncate(row.get("ai_summary") or "", _PREVIEW_LIMIT))
     emoji = _priority_emoji(row.get("urgency_score"))
-    return f"{emoji} {_id_prefix(row)} {sender} — {subject}\n{summary}"
+    lines = [f"{emoji} {_id_prefix(row)} · *{name}*", f"✉️ {subject}"]
+    if summary:
+        lines.append(f"   ↳ {summary}")
+    return "\n".join(lines)
 
 
 _TONE_LABEL = {

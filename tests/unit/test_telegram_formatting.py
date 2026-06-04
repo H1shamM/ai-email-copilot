@@ -7,7 +7,36 @@ from app.telegram.formatting import (
     format_inbox_entry,
     format_notification,
     format_unread_entry,
+    sender_display_name,
 )
+
+
+def test_sender_display_name_prefers_display_name():
+    assert sender_display_name("Qodo <no-reply@qodo.com>") == "Qodo"
+
+
+def test_sender_display_name_falls_back_to_bare_address():
+    assert sender_display_name("no-reply@qodo.com") == "no-reply@qodo.com"
+
+
+def test_sender_display_name_handles_none():
+    assert sender_display_name(None) == "Unknown sender"
+
+
+def test_format_inbox_entry_drops_raw_address_and_truncates_long_summary():
+    row = {
+        "id": 3,
+        "sender": "Qodo <no-reply@qodo.com>",
+        "subject": "Thank you",
+        "ai_summary": "x" * 200,
+        "urgency_score": 5,
+    }
+    block = format_inbox_entry(row)
+    assert "*Qodo*" in block
+    assert "no-reply@qodo" not in block  # raw address gone
+    assert "✉️ Thank you" in block
+    assert "…" in block  # long summary truncated
+    assert "↳" in block
 
 
 def test_escape_markdown_v2_passes_plain_text_through():
@@ -34,11 +63,16 @@ def test_escape_markdown_v2_escapes_email_address_dot():
 
 
 def test_format_unread_entry_happy_path():
-    email = {"sender": "alice@example.com", "subject": "Hi", "snippet": "Just checking in"}
+    email = {
+        "sender": "Alice <alice@example.com>",
+        "subject": "Hi",
+        "snippet": "Just checking in",
+    }
     block = format_unread_entry(email, 1)
     assert "*1\\.*" in block
-    assert "alice@example\\.com" in block
-    assert "*Subject:* Hi" in block
+    assert "*Alice*" in block  # display name, not the raw <addr>
+    assert "alice@example" not in block  # raw address dropped
+    assert "✉️ Hi" in block
     assert "Just checking in" in block
 
 
