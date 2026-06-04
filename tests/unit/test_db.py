@@ -146,6 +146,24 @@ def test_get_unprocessed_emails_excludes_analyzed():
     assert "done" not in unprocessed_ids
 
 
+def test_count_analyzed_emails_counts_only_processed():
+    for gid in ("c_raw", "c_done1", "c_done2"):
+        db.insert_email(
+            {
+                "id": gid,
+                "thread_id": "t",
+                "sender": "a@a",
+                "subject": "s",
+                "snippet": "",
+                "date": "",
+            }
+        )
+    for gid in ("c_done1", "c_done2"):
+        db.update_analysis(gid, {"summary": "x", "category": "Work", "urgency_score": 1})
+
+    assert db.count_analyzed_emails() == 2
+
+
 def _make_email(gmail_id: str = "msg_d") -> int:
     """Insert an email and return its sqlite rowid."""
     return db.insert_email(

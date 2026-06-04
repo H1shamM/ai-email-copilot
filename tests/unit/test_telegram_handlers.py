@@ -174,16 +174,17 @@ async def test_inbox_lists_analyzed_rows(monkeypatch, authorized_update):
         },
     ]
     monkeypatch.setattr(handlers.db, "get_recent_emails", lambda limit: rows)
+    monkeypatch.setattr(handlers.db, "count_analyzed_emails", lambda: 2)
     await handlers.inbox(authorized_update, None)
     text = _all_reply_texts(authorized_update)
     assert "alice@example\\.com" in text
     assert "bob@example\\.com" in text
     assert "skip@example\\.com" not in text
-    assert "\\#4" in text  # row ids visible so /reply target is obvious
+    assert "\\#4" in text  # row ids visible so /email target is obvious
     assert "\\#6" in text
     assert "🔴" in text
     assert "🟢" in text
-    assert "/reply <id>" in text  # helper tip footer
+    assert "/email" in text  # footer points to the detail view
 
 
 @pytest.mark.asyncio
@@ -191,6 +192,89 @@ async def test_inbox_replies_empty_when_none_analyzed(monkeypatch, authorized_up
     monkeypatch.setattr(handlers.db, "get_recent_emails", lambda limit: [])
     await handlers.inbox(authorized_update, None)
     authorized_update.message.reply_text.assert_awaited_once_with("No analyzed emails yet.")
+
+
+@pytest.mark.asyncio
+async def test_inbox_respects_count_arg(monkeypatch, authorized_update, reply_context):
+    captured = {}
+
+    def fake_recent(limit):
+        captured["limit"] = limit
+        return []
+
+    monkeypatch.setattr(handlers.db, "get_recent_emails", fake_recent)
+    reply_context.args = ["15"]
+    await handlers.inbox(authorized_update, reply_context)
+    assert captured["limit"] == 15
+
+
+@pytest.mark.asyncio
+async def test_email_command_requires_id(authorized_update, reply_context):
+    await handlers.email_command(authorized_update, reply_context)
+    assert "Usage: /email" in _all_reply_texts(authorized_update)
+
+
+@pytest.mark.asyncio
+async def test_email_command_not_found(monkeypatch, authorized_update, reply_context):
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: None)
+    reply_context.args = ["999"]
+    await handlers.email_command(authorized_update, reply_context)
+    assert "No email with id 999" in _all_reply_texts(authorized_update)
+
+
+@pytest.mark.asyncio
+async def test_email_command_shows_detail_with_buttons(
+    monkeypatch, authorized_update, reply_context
+):
+    row = {
+        "id": 5,
+        "sender": "Boss <boss@corp.com>",
+        "subject": "Q3 plan",
+        "ai_summary": "summary",
+        "urgency_score": 7,
+        "category": "Work",
+        "action_required": "Reply",
+        "thread_id": "th1",
+    }
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: row)
+    reply_context.args = ["5"]
+    await handlers.email_command(authorized_update, reply_context)
+
+    call = authorized_update.effective_chat.send_message.await_args_list[-1]
+    assert "Q3 plan" in call.args[0]
+    buttons = [b for kb_row in call.kwargs["reply_markup"].inline_keyboard for b in kb_row]
+    labels = [b.text for b in buttons]
+    assert any("Reply" in label for label in labels)
+    assert any("Done" in label for label in labels)
+    assert any(b.url and "th1" in b.url for b in buttons)  # Open-in-Gmail link
+
+
+@pytest.mark.asyncio
+async def test_cb_email_reply_runs_flow(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    flow_calls: list = []
+
+    async def fake_flow(update, email_id):
+        flow_calls.append(email_id)
+
+    monkeypatch.setattr(handlers, "_run_reply_flow", fake_flow)
+    update = _make_callback_update("e:reply:5")
+    await handlers.cb_email_reply(update, reply_context)
+    assert flow_calls == [5]
+
+
+@pytest.mark.asyncio
+async def test_cb_email_done_marks_done(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    done_calls: list = []
+    monkeypatch.setattr(handlers.db, "mark_email_done", lambda eid: done_calls.append(eid))
+    update = _make_callback_update("e:done:5")
+    await handlers.cb_email_done(update, reply_context)
+    assert done_calls == [5]
+    sent = update.effective_chat.send_message.await_args_list[-1].args[0]
+    assert "done" in sent.lower()
 
 
 def _analyzed_email_row(row_id: int = 5) -> dict:
@@ -841,7 +925,7 @@ async def test_cb_notify_done_ignores_malformed_callback(monkeypatch, reply_cont
 
 @pytest.mark.asyncio
 async def test_set_bot_commands_registers_all_commands():
-    """All 9 user-facing commands must be sent to Telegram's set_my_commands."""
+    """All user-facing commands must be sent to Telegram's set_my_commands."""
     application = MagicMock()
     application.bot.set_my_commands = AsyncMock()
 
@@ -856,6 +940,7 @@ async def test_set_bot_commands_registers_all_commands():
         "unread",
         "analyze",
         "inbox",
+        "email",
         "reply",
         "schedule",
         "agent",

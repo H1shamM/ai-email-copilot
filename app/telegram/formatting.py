@@ -1,6 +1,9 @@
 """Telegram MarkdownV2 escaping + email/analysis renderers + 4096-char chunking."""
 
+from datetime import datetime
 from email.utils import parseaddr
+
+from dateutil import parser as date_parser
 
 # Per https://core.telegram.org/bots/api#markdownv2-style — these MUST be escaped
 # anywhere they appear in user-supplied text, otherwise the bot API returns
@@ -44,6 +47,38 @@ def _truncate(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
+_ACTION_GLYPH = {
+    "Reply": "✍️",
+    "Schedule": "📅",
+    "Read": "📖",
+    "Archive": "🗄",
+    "Flag": "🚩",
+}
+
+
+def _action_glyph(action: str | None) -> str:
+    """Glyph for an analyzer action_required; empty string when unknown."""
+    return _ACTION_GLYPH.get(action or "", "")
+
+
+def _short_time(date_str: str | None, now: datetime | None = None, full: bool = False) -> str:
+    """Parse a received/created timestamp into a short label; '' if unparseable.
+
+    Today → `HH:MM`, otherwise `DD Mon`. `full` gives `DD Mon YYYY, HH:MM` for the
+    detail view. Naive comparison (tz dropped) — good enough for a recency hint.
+    """
+    if not date_str:
+        return ""
+    try:
+        dt = date_parser.parse(date_str).replace(tzinfo=None)
+    except (ValueError, OverflowError, TypeError):
+        return ""
+    if full:
+        return dt.strftime("%d %b %Y, %H:%M")
+    now = now or datetime.now()
+    return dt.strftime("%H:%M") if dt.date() == now.date() else dt.strftime("%d %b")
+
+
 _SUBJECT_LIMIT = 70
 _PREVIEW_LIMIT = 110
 
@@ -84,15 +119,58 @@ def format_analysis_entry(email: dict, analysis: dict) -> str:
 
 
 def format_inbox_entry(row: dict) -> str:
-    """Render one analyzed-email DB row as a compact MarkdownV2 card keyed by row id."""
+    """Render one analyzed-email DB row as a compact MarkdownV2 card keyed by row id.
+
+    Line 1 carries the decision signals: priority, id, sender, a recency hint, and
+    the suggested-action glyph. Lines 2-3 are subject + a one-line summary.
+    """
     name = escape_markdown_v2(sender_display_name(row.get("sender")))
     subject = escape_markdown_v2(_truncate(row.get("subject") or "(no subject)", _SUBJECT_LIMIT))
     summary = escape_markdown_v2(_truncate(row.get("ai_summary") or "", _PREVIEW_LIMIT))
     emoji = _priority_emoji(row.get("urgency_score"))
-    lines = [f"{emoji} {_id_prefix(row)} · *{name}*", f"✉️ {subject}"]
+
+    header = f"{emoji} {_id_prefix(row)} · *{name}*"
+    when = _short_time(row.get("received_date") or row.get("created_at"))
+    if when:
+        header += f" · {escape_markdown_v2(when)}"
+    glyph = _action_glyph(row.get("action_required"))
+    if glyph:
+        header += f" · {glyph}"
+
+    lines = [header, f"✉️ {subject}"]
     if summary:
         lines.append(f"   ↳ {summary}")
     return "\n".join(lines)
+
+
+def format_email_detail(row: dict) -> str:
+    """Render the full single-email detail view (untruncated) for `/email <id>`."""
+    emoji = _priority_emoji(row.get("urgency_score"))
+    urgency = row.get("urgency_score")
+    urgency_str = escape_markdown_v2(f"{urgency}/10" if urgency is not None else "n/a")
+    sender = escape_markdown_v2(row.get("sender") or "Unknown sender")
+    when = escape_markdown_v2(
+        _short_time(row.get("received_date") or row.get("created_at"), full=True)
+    )
+    category = escape_markdown_v2(row.get("category") or "Unknown")
+    action = row.get("action_required")
+    subject = escape_markdown_v2(row.get("subject") or "(no subject)")
+    summary = escape_markdown_v2(row.get("ai_summary") or "(not analyzed yet — run /analyze)")
+
+    meta = f"📂 {category}"
+    if when:
+        meta = f"🕑 {when}   {meta}"
+    glyph = _action_glyph(action)
+    if action:
+        meta += f"   {glyph} {escape_markdown_v2(action)}"
+
+    return (
+        f"{emoji} {_id_prefix(row)} · *urgency {urgency_str}*\n\n"
+        f"👤 {sender}\n"
+        f"{meta}\n\n"
+        f"✉️ *{subject}*\n\n"
+        f"📝 {summary}"
+    )
 
 
 _TONE_LABEL = {

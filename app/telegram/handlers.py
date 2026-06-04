@@ -38,12 +38,15 @@ from app.telegram.formatting import (
     escape_markdown_v2,
     format_analysis_entry,
     format_drafts_message,
+    format_email_detail,
     format_inbox_entry,
     format_unread_entry,
 )
 
-INBOX_DEFAULT_LIMIT = 10
-UNREAD_DEFAULT_LIMIT = 20
+INBOX_DEFAULT_LIMIT = 6
+UNREAD_DEFAULT_LIMIT = 8
+LIST_MAX_LIMIT = 50
+_GMAIL_THREAD_URL = "https://mail.google.com/mail/u/0/#all/{thread_id}"
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +56,7 @@ WELCOME = (
     "/unread - list unread emails\n"
     "/analyze - run AI analysis on unprocessed emails\n"
     "/inbox - show last analyzed emails\n"
+    "/email <id> - open one email in full with actions\n"
     "/reply <id> - draft a reply to an email\n"
     "/schedule - create calendar events from detected meetings\n"
     "/agent <text> - run a natural-language request through the agent\n"
@@ -70,6 +74,7 @@ COMMANDS: list[BotCommand] = [
     BotCommand("unread", "list unread emails from gmail"),
     BotCommand("analyze", "analyze emails with claude"),
     BotCommand("inbox", "show recently analyzed emails"),
+    BotCommand("email", "open one email in full — usage: /email <id>"),
     BotCommand("reply", "draft replies — usage: /reply <id>"),
     BotCommand("schedule", "create calendar events from detected meetings"),
     BotCommand("agent", "run a natural-language request through the agent"),
@@ -165,22 +170,33 @@ async def _send_chunks(update: Update, blocks: list[str], empty_message: str) ->
         )
 
 
+def _list_limit(context: ContextTypes.DEFAULT_TYPE, default: int) -> int:
+    """Optional first arg as a count, clamped to [1, LIST_MAX_LIMIT]; else default."""
+    args = getattr(context, "args", None) or []
+    if args and args[0].isdigit():
+        return max(1, min(int(args[0]), LIST_MAX_LIMIT))
+    return default
+
+
 @authorized_only
 async def unread(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Fetch unread emails from Gmail and reply with a numbered list."""
     await _typing(update)
+    limit = _list_limit(context, UNREAD_DEFAULT_LIMIT)
     try:
-        emails = gmail_fetch_recent(max_results=UNREAD_DEFAULT_LIMIT, unread_only=True)
+        emails = gmail_fetch_recent(max_results=limit, unread_only=True)
     except RuntimeError as exc:
         logger.exception("Gmail fetch failed for /unread")
         await update.message.reply_text(f"Gmail error: {exc}")
         return
     blocks = [format_unread_entry(email, i + 1) for i, email in enumerate(emails)]
     if blocks:
-        blocks.append(
-            "_These numbers are just list positions, not reply ids\\. "
-            "To reply, run /analyze then use the \\#id shown by /inbox\\._"
-        )
+        note = "list positions, not reply ids — run /analyze then /inbox"
+        footer = f"Showing {len(emails)} unread · {note}"
+        if len(emails) >= limit and limit < LIST_MAX_LIMIT:
+            more = min(limit * 2, LIST_MAX_LIMIT)
+            footer = f"Showing {len(emails)} · /unread {more} for more · {note}"
+        blocks.append(escape_markdown_v2(footer))
     await _send_chunks(update, blocks, "No unread emails.")
 
 
@@ -226,12 +242,56 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def inbox(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show the most recent analyzed emails from the DB with priority indicators."""
     await _typing(update)
-    rows = db.get_recent_emails(limit=INBOX_DEFAULT_LIMIT)
+    limit = _list_limit(context, INBOX_DEFAULT_LIMIT)
+    rows = db.get_recent_emails(limit=limit)
     analyzed = [row for row in rows if row.get("processed_at")]
     blocks = [format_inbox_entry(row) for row in analyzed]
     if blocks:
-        blocks.append("_Tip:_ use `/reply <id>` with one of the `#` numbers above\\.")
+        total = db.count_analyzed_emails()
+        footer = f"Showing {len(analyzed)} of {total} · open one with /email <id>"
+        if total > len(analyzed) and limit < LIST_MAX_LIMIT:
+            footer = (
+                f"Showing {len(analyzed)} of {total} · /inbox {min(limit * 2, LIST_MAX_LIMIT)} "
+                f"for more · open one with /email <id>"
+            )
+        blocks.append(escape_markdown_v2(footer))
     await _send_chunks(update, blocks, "No analyzed emails yet.")
+
+
+def _build_email_detail_keyboard(row: dict) -> InlineKeyboardMarkup:
+    """Reply / Mark Done / Open-in-Gmail buttons for the /email detail view."""
+    email_id = row["id"]
+    buttons = [
+        InlineKeyboardButton("✍ Reply", callback_data=f"e:reply:{email_id}"),
+        InlineKeyboardButton("✅ Mark Done", callback_data=f"e:done:{email_id}"),
+    ]
+    thread_id = row.get("thread_id")
+    if thread_id:
+        buttons.append(
+            InlineKeyboardButton(
+                "🔗 Open in Gmail", url=_GMAIL_THREAD_URL.format(thread_id=thread_id)
+            )
+        )
+    return InlineKeyboardMarkup([buttons])
+
+
+@authorized_only
+async def email_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """`/email <id>` — open one email in full with Reply / Done / Open-in-Gmail."""
+    args = context.args or []
+    if not args or not args[0].isdigit():
+        await update.effective_chat.send_message("Usage: /email <id> (the #id shown by /inbox)")
+        return
+    row = db.get_email_by_row_id(int(args[0]))
+    if not row:
+        await update.effective_chat.send_message(f"No email with id {args[0]}.")
+        return
+    await update.effective_chat.send_message(
+        format_email_detail(row),
+        parse_mode=ParseMode.MARKDOWN_V2,
+        reply_markup=_build_email_detail_keyboard(row),
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
+    )
 
 
 _REPLY_TONES = ("professional", "friendly", "brief")
@@ -495,6 +555,29 @@ async def cb_notify_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 @authorized_only
+async def cb_email_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/email detail → ✍ Reply: run the shared draft flow."""
+    query = update.callback_query
+    await query.answer("Drafting…")
+    parsed = _parse_callback(query.data or "", prefix="e")
+    if parsed is None or parsed[0] != "reply":
+        return
+    await _run_reply_flow(update, parsed[1])
+
+
+@authorized_only
+async def cb_email_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/email detail → ✅ Mark Done: archive+read in DB."""
+    query = update.callback_query
+    await query.answer("Done")
+    parsed = _parse_callback(query.data or "", prefix="e")
+    if parsed is None or parsed[0] != "done":
+        return
+    db.mark_email_done(parsed[1])
+    await update.effective_chat.send_message("✅ Marked done.")
+
+
+@authorized_only
 async def pause_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Stop the push scheduler."""
     telegram_push.pause()
@@ -710,6 +793,7 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("unread", unread))
     application.add_handler(CommandHandler("analyze", analyze))
     application.add_handler(CommandHandler("inbox", inbox))
+    application.add_handler(CommandHandler("email", email_command))
     application.add_handler(CommandHandler("reply", reply_command))
     application.add_handler(CommandHandler("schedule", schedule_command))
     application.add_handler(CommandHandler("agent", agent_command))
@@ -726,6 +810,8 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(cb_notify_done, pattern=r"^n:done:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_schedule_create, pattern=r"^s:create:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_schedule_skip, pattern=r"^s:skip:\d+$"))
+    application.add_handler(CallbackQueryHandler(cb_email_reply, pattern=r"^e:reply:\d+$"))
+    application.add_handler(CallbackQueryHandler(cb_email_done, pattern=r"^e:done:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_agent_approve, pattern=r"^a:approve$"))
     application.add_handler(CallbackQueryHandler(cb_agent_cancel, pattern=r"^a:cancel$"))
 

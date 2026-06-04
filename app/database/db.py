@@ -209,6 +209,18 @@ def get_recent_emails(limit: int = 50) -> list[dict]:
         conn.close()
 
 
+def count_analyzed_emails() -> int:
+    """Total analyzed emails, for the /inbox "showing N of M" footer."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM emails WHERE processed_at IS NOT NULL"
+        ).fetchone()
+        return int(row["n"]) if row else 0
+    finally:
+        conn.close()
+
+
 def get_unprocessed_emails() -> list[dict]:
     """Get emails that haven't been analyzed yet."""
     conn = get_connection()
