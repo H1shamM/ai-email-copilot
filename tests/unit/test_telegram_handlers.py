@@ -808,38 +808,44 @@ async def test_cb_edit_start_stashes_draft_id(monkeypatch, reply_context):
 
 
 @pytest.mark.asyncio
-async def test_cb_edit_save_overwrites_then_sends(monkeypatch, authorized_update, reply_context):
+async def test_cb_edit_save_updates_draft_for_review_not_send(
+    monkeypatch, authorized_update, reply_context
+):
+    """Editing must NOT send — it updates the draft and re-shows it for review."""
     reply_context.user_data["editing_draft_id"] = 7
     authorized_update.message.text = "  My revised draft.  "
     authorized_update.effective_chat.send_message = AsyncMock()
 
-    monkeypatch.setattr(
-        handlers.db,
-        "get_draft_by_id",
-        lambda _: {
-            "id": 7,
-            "email_id": 5,
-            "tone": "friendly",
-            "draft_text": "My revised draft.",
-            "status": "edited",
-        },
-    )
-    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: _analyzed_email_row())
-    monkeypatch.setattr(handlers, "gmail_send_reply", lambda *_: "new-id")
-
+    draft = {"id": 7, "email_id": 5, "tone": "voice", "draft_text": "old", "status": "pending"}
     status_calls: list[tuple] = []
-    monkeypatch.setattr(
-        handlers.db,
-        "update_draft_status",
-        lambda did, status, **kw: status_calls.append((did, status, kw)),
-    )
+
+    def fake_update(did, status, **kw):
+        status_calls.append((did, status, kw))
+        if "draft_text" in kw:
+            draft["draft_text"] = kw["draft_text"]
+
+    monkeypatch.setattr(handlers.db, "get_draft_by_id", lambda _: draft)
+    monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: _analyzed_email_row())
+    monkeypatch.setattr(handlers.db, "update_draft_status", fake_update)
+
+    sent = False
+
+    def boom(*_):
+        nonlocal sent
+        sent = True
+        return "id"
+
+    monkeypatch.setattr(handlers, "gmail_send_reply", boom)
 
     state = await handlers.cb_edit_save(authorized_update, reply_context)
 
     assert state == -1
-    # First call: 'edited' with the new text. Second call: 'sent' inside _send_draft.
-    assert status_calls[0] == (7, "edited", {"draft_text": "My revised draft."})
-    assert status_calls[1] == (7, "sent", {"mark_sent": True})
+    assert status_calls == [(7, "edited", {"draft_text": "My revised draft."})]  # text saved
+    assert sent is False  # NOT sent — re-rendered for review instead
+    rendered = " ".join(
+        c.args[0] for c in authorized_update.effective_chat.send_message.await_args_list if c.args
+    )
+    assert "My revised draft" in rendered  # the revised draft is shown for review
 
 
 @pytest.mark.asyncio
