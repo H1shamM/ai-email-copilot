@@ -142,7 +142,8 @@ A UX-only pass over every command (triage/time-saving lens) filed 7 findings ([#
 - ✅ **Agent Markdown rendering** ([#87](https://github.com/H1shamM/ai-email-copilot/issues/87) / PR [#94](https://github.com/H1shamM/ai-email-copilot/pull/94)) — `/agent` replies (the flagship triage feature) were printing literal `**`/`##`; now converted to MarkdownV2 (`agent_text_to_md2`) with a `strip_markdown` plain fallback.
 - ✅ **Guided welcome** ([#88](https://github.com/H1shamM/ai-email-copilot/issues/88) / PR [#95](https://github.com/H1shamM/ai-email-copilot/pull/95)) — WELCOME leads with "Start with /inbox … or ask /agent what's urgent".
 - ✅ **Clean nameless-sender labels** ([#92](https://github.com/H1shamM/ai-email-copilot/issues/92) / PR #95) — show the domain org label instead of an auto-linked bare address.
-- 🔲 Open: [#89](https://github.com/H1shamM/ai-email-copilot/issues/89) consolidate `/unread`+`/analyze`+`/inbox`, [#90](https://github.com/H1shamM/ai-email-copilot/issues/90) bulk triage, [#91](https://github.com/H1shamM/ai-email-copilot/issues/91) faster `/reply`, [#93](https://github.com/H1shamM/ai-email-copilot/issues/93) tappable agent ids.
+- ✅ **Bulk triage** ([#90](https://github.com/H1shamM/ai-email-copilot/issues/90) / PR [#96](https://github.com/H1shamM/ai-email-copilot/pull/96)) — `/inbox` gained **✅ Done all** + **🗄 Clear low** (urgency < 5) bulk buttons. `get_recent_emails`/`count_analyzed_emails` now exclude `is_archived` so Mark Done actually clears the inbox view. Verified live: buttons render under the tap-to-open grid.
+- 🔲 Open: [#89](https://github.com/H1shamM/ai-email-copilot/issues/89) consolidate `/unread`+`/analyze`+`/inbox`, [#91](https://github.com/H1shamM/ai-email-copilot/issues/91) faster `/reply`, [#93](https://github.com/H1shamM/ai-email-copilot/issues/93) tappable agent ids.
 
 ### Re-auth required after Story W4-A merges
 
