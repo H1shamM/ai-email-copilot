@@ -1,5 +1,6 @@
 """Telegram MarkdownV2 escaping + email/analysis renderers + 4096-char chunking."""
 
+import re
 from datetime import datetime
 from email.utils import parseaddr
 
@@ -19,6 +20,55 @@ def escape_markdown_v2(text: str | None) -> str:
     if not text:
         return ""
     return text.translate(_MD_V2_TRANSLATION)
+
+
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+_HEADER_RE = re.compile(r"^\s*#{1,6}\s+(.*)$")
+_BULLET_RE = re.compile(r"^(\s*)[-*]\s+(.*)$")
+
+
+def _md2_inline(text: str) -> str:
+    """Escape a single line for MarkdownV2, rendering **bold** as *bold*."""
+    parts: list[str] = []
+    last = 0
+    for m in _BOLD_RE.finditer(text):
+        parts.append(escape_markdown_v2(text[last : m.start()]))
+        parts.append("*" + escape_markdown_v2(m.group(1)) + "*")
+        last = m.end()
+    parts.append(escape_markdown_v2(text[last:]))
+    return "".join(parts)
+
+
+def agent_text_to_md2(text: str | None) -> str:
+    """Convert the agent's standard-Markdown reply to Telegram MarkdownV2.
+
+    `## headers` and `**bold**` become bold, `-`/`*` bullets become `•`, and
+    everything else is escaped. Caller should fall back to `strip_markdown` on a
+    MarkdownV2 send error.
+    """
+    out: list[str] = []
+    for line in (text or "").split("\n"):
+        header = _HEADER_RE.match(line)
+        if header:
+            out.append("*" + _md2_inline(header.group(1)) + "*")
+            continue
+        bullet = _BULLET_RE.match(line)
+        if bullet:
+            out.append(f"{bullet.group(1)}• {_md2_inline(bullet.group(2))}")
+            continue
+        out.append(_md2_inline(line))
+    return "\n".join(out)
+
+
+def strip_markdown(text: str | None) -> str:
+    """Strip Markdown to clean plain text (the no-parse-mode fallback)."""
+    out: list[str] = []
+    for line in (text or "").split("\n"):
+        line = re.sub(r"^\s*#{1,6}\s+", "", line)
+        line = _BOLD_RE.sub(r"\1", line)
+        line = re.sub(r"^(\s*)[-*]\s+", r"\1• ", line)
+        out.append(line)
+    return "\n".join(out)
 
 
 def _priority_emoji(urgency: int | None) -> str:
