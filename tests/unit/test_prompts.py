@@ -35,3 +35,13 @@ def test_build_reply_prompt_handles_missing_fields():
 def test_build_reply_prompt_rejects_unknown_tone():
     with pytest.raises(ValueError, match="Unknown tone"):
         build_reply_prompt({"sender": "a"}, "shouty")
+
+
+def test_build_reply_prompt_injects_style_samples():
+    rendered = build_reply_prompt({"sender": "a"}, "brief", style_samples=["Cheers, H"])
+    assert "MY WRITING VOICE" in rendered
+    assert "Cheers, H" in rendered
+
+
+def test_build_reply_prompt_omits_style_block_without_samples():
+    assert "MY WRITING VOICE" not in build_reply_prompt({"sender": "a"}, "brief")

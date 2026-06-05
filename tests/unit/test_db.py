@@ -185,6 +185,14 @@ def test_mark_email_done_removes_from_recent_and_count():
     assert db.count_analyzed_emails() == before - 1
 
 
+def test_preference_round_trips_and_upserts():
+    assert db.get_preference("voice_samples") is None
+    db.set_preference("voice_samples", "v1")
+    assert db.get_preference("voice_samples") == "v1"
+    db.set_preference("voice_samples", "v2")  # upsert, not duplicate
+    assert db.get_preference("voice_samples") == "v2"
+
+
 def _make_email(gmail_id: str = "msg_d") -> int:
     """Insert an email and return its sqlite rowid."""
     return db.insert_email(

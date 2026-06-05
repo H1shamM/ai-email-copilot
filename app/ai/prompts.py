@@ -31,7 +31,7 @@ Body: {body}
 
 TONE INSTRUCTIONS:
 {tone_instructions}
-
+{style_block}
 Rules:
 - Address every question or request in the original email.
 - Sound natural and human; do not mention that you are an AI.
@@ -41,8 +41,20 @@ Rules:
 REPLY:"""
 
 
-def build_reply_prompt(email: dict, tone: str) -> str:
-    """Render the prompt for a single tone. Raises on unknown tone."""
+def _style_block(style_samples: list[str] | None) -> str:
+    """A prompt section showing the user's own past emails to mimic their voice."""
+    if not style_samples:
+        return ""
+    examples = "\n\n---\n\n".join(style_samples)
+    return (
+        "\nMY WRITING VOICE — match my vocabulary, greeting, phrasing, and sign-off. "
+        "These are real emails I have written:\n"
+        f"{examples}\n"
+    )
+
+
+def build_reply_prompt(email: dict, tone: str, style_samples: list[str] | None = None) -> str:
+    """Render the prompt for a single tone, optionally in the user's own voice."""
     if tone not in TONE_INSTRUCTIONS:
         raise ValueError(f"Unknown tone {tone!r}; allowed: {sorted(TONE_INSTRUCTIONS)}")
     return REPLY_PROMPT.format(
@@ -51,4 +63,5 @@ def build_reply_prompt(email: dict, tone: str) -> str:
         subject=email.get("subject", "(no subject)"),
         body=email.get("body") or email.get("snippet", ""),
         tone_instructions=TONE_INSTRUCTIONS[tone],
+        style_block=_style_block(style_samples),
     )
