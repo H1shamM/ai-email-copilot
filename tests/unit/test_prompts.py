@@ -5,9 +5,11 @@ import pytest
 from app.ai.prompts import TONE_INSTRUCTIONS, TONES, build_reply_prompt
 
 
-def test_three_tones_present():
+def test_tone_presets_and_voice_present():
     assert set(TONES) == {"professional", "friendly", "brief"}
-    assert set(TONE_INSTRUCTIONS) == set(TONES)
+    # TONE_INSTRUCTIONS also carries the single-draft "voice" register.
+    assert set(TONES).issubset(set(TONE_INSTRUCTIONS))
+    assert "voice" in TONE_INSTRUCTIONS
 
 
 def test_build_reply_prompt_includes_email_fields():

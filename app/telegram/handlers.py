@@ -25,7 +25,7 @@ from telegram.ext import (
 from app.ai import agent
 from app.ai.analyzer import analyze_email
 from app.ai.meeting_detector import maybe_detect_meeting
-from app.ai.reply_generator import generate_replies, regenerate_one
+from app.ai.reply_generator import generate_voice_reply
 from app.calendar import scheduler
 from app.database import db
 from app.gmail.service import get_recent_emails as gmail_fetch_recent
@@ -38,9 +38,9 @@ from app.telegram.formatting import (
     chunk_messages,
     escape_markdown_v2,
     format_analysis_entry,
-    format_drafts_message,
     format_email_detail,
     format_inbox_entry,
+    format_single_draft,
     format_unread_entry,
     strip_markdown,
 )
@@ -403,34 +403,37 @@ async def cb_email_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await _send_email_detail(update.effective_chat, row)
 
 
-_REPLY_TONES = ("professional", "friendly", "brief")
-_TONE_GLYPH = {"professional": "🎩", "friendly": "😊", "brief": "⚡"}
-
-
-def _build_reply_keyboard(drafts: list[dict], email_id: int) -> InlineKeyboardMarkup:
-    """Build the Approve/Edit/Regenerate per tone + Skip All keyboard."""
-    rows = []
-    by_tone = {d["tone"]: d for d in drafts}
-    for tone in _REPLY_TONES:
-        draft = by_tone.get(tone)
-        if not draft:
-            continue
-        glyph = _TONE_GLYPH[tone]
-        rows.append(
+def _build_reply_keyboard(draft_id: int, email_id: int) -> InlineKeyboardMarkup:
+    """Single-draft actions: Send / Shorter / Warmer / Edit / Skip."""
+    return InlineKeyboardMarkup(
+        [
             [
-                InlineKeyboardButton(
-                    f"{glyph} ✅ Approve", callback_data=f"r:approve:{draft['id']}"
-                ),
-                InlineKeyboardButton(f"{glyph} ✏ Edit", callback_data=f"r:edit:{draft['id']}"),
-                InlineKeyboardButton(f"{glyph} 🔄 Regen", callback_data=f"r:regen:{draft['id']}"),
-            ]
-        )
-    rows.append([InlineKeyboardButton("⏭ Skip all", callback_data=f"r:skip:{email_id}")])
-    return InlineKeyboardMarkup(rows)
+                InlineKeyboardButton("✅ Send", callback_data=f"r:approve:{draft_id}"),
+                InlineKeyboardButton("✏ Shorter", callback_data=f"r:shorter:{draft_id}"),
+                InlineKeyboardButton("✏ Warmer", callback_data=f"r:warmer:{draft_id}"),
+            ],
+            [
+                InlineKeyboardButton("✏ Edit", callback_data=f"r:edit:{draft_id}"),
+                InlineKeyboardButton("⏭ Skip", callback_data=f"r:skip:{email_id}"),
+            ],
+        ]
+    )
+
+
+async def _send_draft_message(chat, email: dict, draft: dict) -> None:
+    """Send/replace the single-draft message with its action keyboard."""
+    keyboard = _build_reply_keyboard(draft["id"], email["id"])
+    body = format_single_draft(email, draft["draft_text"])
+    for chunk in chunk_messages([body]):
+        try:
+            await chat.send_message(chunk, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
+        except Exception:  # noqa: BLE001 — MarkdownV2 is fiddly; never lose the draft
+            logger.exception("MarkdownV2 send failed; falling back to plain text")
+            await chat.send_message(chunk, reply_markup=keyboard)
 
 
 async def _run_reply_flow(update: Update, email_id: int) -> None:
-    """Generate 3 drafts for email_id, persist, and post with action keyboard.
+    """Generate ONE reply in the user's voice, persist it, and post with actions.
 
     Uses `effective_chat.send_message` so it works identically from `/reply <id>`
     and from the notification's "Generate Reply" button (PTB freezes Update
@@ -453,33 +456,15 @@ async def _run_reply_flow(update: Update, email_id: int) -> None:
         return
 
     await _typing(update)
-    await chat.send_message("✍️ Drafting 3 replies… this can take up to a minute.")
+    await chat.send_message("✍️ Drafting a reply in your voice…")
     await _typing(update)
-    replies = await asyncio.to_thread(generate_replies, email)
-    if not replies:
-        await chat.send_message("Couldn't draft replies — try again in a moment.")
+    text = await asyncio.to_thread(generate_voice_reply, email)
+    if not text:
+        await chat.send_message("Couldn't draft a reply — try again in a moment.")
         return
 
-    drafts: list[dict] = []
-    for tone, text in replies.items():
-        draft_id = db.insert_draft_reply(email_id, tone, text)
-        drafts.append(db.get_draft_by_id(draft_id))
-
-    body = format_drafts_message(email, drafts)
-    keyboard = _build_reply_keyboard(drafts, email_id)
-    for chunk in chunk_messages([body]):
-        try:
-            await chat.send_message(
-                chunk,
-                parse_mode=ParseMode.MARKDOWN_V2,
-                reply_markup=keyboard,
-            )
-        except Exception:  # noqa: BLE001
-            # MarkdownV2 escaping is fiddly; fall back to plain text so the
-            # user always sees the drafts even if a stray reserved char slips
-            # through escape_markdown_v2.
-            logger.exception("MarkdownV2 send failed; falling back to plain text")
-            await chat.send_message(chunk, reply_markup=keyboard)
+    draft_id = db.insert_draft_reply(email_id, "voice", text)
+    await _send_draft_message(chat, email, db.get_draft_by_id(draft_id))
 
 
 @authorized_only
@@ -606,14 +591,14 @@ async def cb_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 @authorized_only
-async def cb_regenerate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Regenerate one tone — replace draft_text in place; leave others untouched."""
+async def cb_reply_nudge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Shorter/Warmer — regenerate the draft in the user's voice with that nudge."""
     query = update.callback_query
-    await query.answer("Regenerating…")
+    await query.answer("Reworking…")
     parsed = _parse_callback(query.data or "")
-    if parsed is None or parsed[0] != "regen":
+    if parsed is None or parsed[0] not in ("shorter", "warmer"):
         return
-    _, draft_id = parsed
+    modifier, draft_id = parsed
     draft = db.get_draft_by_id(draft_id)
     if draft is None:
         await update.effective_chat.send_message("That draft no longer exists.")
@@ -624,14 +609,12 @@ async def cb_regenerate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     await _typing(update)
-    new_text = await asyncio.to_thread(regenerate_one, email, draft["tone"])
+    new_text = await asyncio.to_thread(generate_voice_reply, email, modifier)
     if not new_text:
-        await update.effective_chat.send_message(f"Regenerate failed for {draft['tone']}.")
+        await update.effective_chat.send_message(f"Couldn't make it {modifier} — try again.")
         return
     db.update_draft_status(draft_id, "pending", draft_text=new_text)
-    await update.effective_chat.send_message(
-        f"🔄 New {draft['tone']} draft saved — tap Approve when ready."
-    )
+    await _send_draft_message(update.effective_chat, email, db.get_draft_by_id(draft_id))
 
 
 @authorized_only
@@ -930,7 +913,9 @@ def register(application: Application) -> None:
     application.add_handler(build_edit_handler(cb_edit_start, cb_edit_save))
     application.add_handler(CallbackQueryHandler(cb_approve, pattern=r"^r:approve:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_skip, pattern=r"^r:skip:\d+$"))
-    application.add_handler(CallbackQueryHandler(cb_regenerate, pattern=r"^r:regen:\d+$"))
+    application.add_handler(
+        CallbackQueryHandler(cb_reply_nudge, pattern=r"^r:(shorter|warmer):\d+$")
+    )
     application.add_handler(CallbackQueryHandler(cb_notify_reply, pattern=r"^n:reply:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_notify_done, pattern=r"^n:done:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_schedule_create, pattern=r"^s:create:\d+$"))

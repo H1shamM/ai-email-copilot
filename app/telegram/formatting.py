@@ -274,6 +274,14 @@ def format_drafts_message(email: dict, drafts: list[dict]) -> str:
     return "".join(sections) if len(sections) == 1 else "\n".join(sections)
 
 
+def format_single_draft(email: dict, draft_text: str) -> str:
+    """Render one draft (in the user's voice) as a MarkdownV2 message."""
+    sender = escape_markdown_v2(sender_display_name(email.get("sender")))
+    subject = escape_markdown_v2(email.get("subject") or "(no subject)")
+    body = escape_markdown_v2(draft_text or "")
+    return f"✍️ *Draft reply to* {sender}\n*Re:* {subject}\n\n{body}"
+
+
 def format_notification(row: dict) -> str:
     """MarkdownV2 push-notification block: sender, subject, category, urgency, summary."""
     sender = escape_markdown_v2(row.get("sender") or "Unknown sender")
