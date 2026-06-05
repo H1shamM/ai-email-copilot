@@ -48,8 +48,7 @@ async def test_unread_replies_with_numbered_list(monkeypatch, authorized_update)
     text = _all_reply_texts(authorized_update)
     assert "*1\\.*" in text
     assert "*2\\.*" in text
-    assert "alice@example\\.com" in text
-    assert "bob@example\\.com" in text
+    assert "example" in text  # nameless senders → domain org label
 
 
 @pytest.mark.asyncio
@@ -177,11 +176,11 @@ async def test_inbox_lists_analyzed_rows(monkeypatch, authorized_update):
     monkeypatch.setattr(handlers.db, "count_analyzed_emails", lambda: 2)
     await handlers.inbox(authorized_update, None)
     text = _all_reply_texts(authorized_update)
-    assert "alice@example\\.com" in text
-    assert "bob@example\\.com" in text
-    assert "skip@example\\.com" not in text
-    assert "\\#4" in text  # row ids visible on the cards
+    assert "example" in text  # analyzed senders rendered (org label)
+    assert "skip@example\\.com" not in text  # unprocessed row excluded
+    assert "\\#4" in text  # analyzed row ids visible on the cards
     assert "\\#6" in text
+    assert "\\#5" not in text  # the unprocessed row (#5) is not shown
     assert "🔴" in text
     assert "🟢" in text
     assert "tap a button" in text.lower()  # footer points to the tap-to-open buttons

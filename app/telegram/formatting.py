@@ -82,13 +82,36 @@ def _priority_emoji(urgency: int | None) -> str:
     return "🟢"
 
 
-def sender_display_name(raw_sender: str | None) -> str:
-    """The human-friendly sender: display name when present, else the bare address.
+# ccTLD second-level domains where the org label is the third-from-last part.
+_MULTI_PART_TLDS = {"co.uk", "co.il", "com.au", "co.jp", "org.uk", "co.nz", "com.br"}
 
-    Drops the `Name <addr>` duplication that made list rows long and auto-linked.
+
+def _sender_org(addr: str) -> str:
+    """The org label of an email's domain (e.g. swiftness@…co.il → 'swiftness').
+
+    Avoids showing a full address, which Telegram auto-links into blue noise.
+    """
+    domain = addr.rsplit("@", 1)[-1].lower()
+    labels = domain.split(".")
+    if len(labels) >= 3 and ".".join(labels[-2:]) in _MULTI_PART_TLDS:
+        return labels[-3]
+    if len(labels) >= 2:
+        return labels[-2]
+    return domain or addr
+
+
+def sender_display_name(raw_sender: str | None) -> str:
+    """The human-friendly sender: display name when present, else the domain org.
+
+    Drops the `Name <addr>` duplication and avoids a bare address that Telegram
+    would auto-link.
     """
     name, addr = parseaddr(raw_sender or "")
-    return name or addr or (raw_sender or "Unknown sender")
+    if name:
+        return name
+    if addr and "@" in addr:
+        return _sender_org(addr)
+    return addr or (raw_sender or "Unknown sender")
 
 
 def _truncate(text: str, limit: int) -> str:

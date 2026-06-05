@@ -84,8 +84,10 @@ def test_sender_display_name_prefers_display_name():
     assert sender_display_name("Qodo <no-reply@qodo.com>") == "Qodo"
 
 
-def test_sender_display_name_falls_back_to_bare_address():
-    assert sender_display_name("no-reply@qodo.com") == "no-reply@qodo.com"
+def test_sender_display_name_uses_domain_org_when_no_name():
+    # No display name → show the org label, not an auto-linkable bare address.
+    assert sender_display_name("no-reply@qodo.com") == "qodo"
+    assert sender_display_name("doNotReply@swiftness.co.il") == "swiftness"
 
 
 def test_sender_display_name_handles_none():
@@ -196,7 +198,7 @@ def test_format_inbox_entry_happy_path():
     block = format_inbox_entry(row)
     assert block.startswith("🔴")
     assert "*\\#12*" in block
-    assert "alice@example\\.com" in block
+    assert "example" in block  # nameless sender → domain org label, not bare address
     assert "Update" in block
     assert "All good\\." in block
 
