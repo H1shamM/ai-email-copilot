@@ -1254,7 +1254,7 @@ async def test_agent_command_text_only_no_pending(monkeypatch, authorized_update
     reply_context.args = ["summarize", "my", "unread"]
     await handlers.agent_command(authorized_update, reply_context)
 
-    assert "Here is your summary." in _all_reply_texts(authorized_update)
+    assert "Here is your summary" in _all_reply_texts(authorized_update)  # md2-escaped
     assert "agent_pending" not in reply_context.user_data
 
 

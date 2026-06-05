@@ -34,6 +34,7 @@ from app.gmail.service import send_reply as gmail_send_reply
 from app.telegram import push as telegram_push
 from app.telegram.conversations import WAITING_FOR_TEXT, build_edit_handler
 from app.telegram.formatting import (
+    agent_text_to_md2,
     chunk_messages,
     escape_markdown_v2,
     format_analysis_entry,
@@ -41,6 +42,7 @@ from app.telegram.formatting import (
     format_email_detail,
     format_inbox_entry,
     format_unread_entry,
+    strip_markdown,
 )
 
 INBOX_DEFAULT_LIMIT = 6
@@ -767,7 +769,7 @@ async def agent_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await _safe_delete(status)
 
     if not pending:
-        await chat.send_message(text or "Done — nothing to do.")
+        await _send_agent_reply(chat, text or "Done — nothing to do.")
         return
 
     context.user_data["agent_pending"] = pending
@@ -783,7 +785,23 @@ async def agent_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             ]
         ]
     )
-    await chat.send_message("\n".join(lines), reply_markup=keyboard)
+    await _send_agent_reply(chat, "\n".join(lines), keyboard)
+
+
+async def _send_agent_reply(
+    chat, body: str, reply_markup: InlineKeyboardMarkup | None = None
+) -> None:
+    """Send the agent's Markdown reply rendered as MarkdownV2; plain-text on failure."""
+    try:
+        await chat.send_message(
+            agent_text_to_md2(body),
+            parse_mode=ParseMode.MARKDOWN_V2,
+            reply_markup=reply_markup,
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
+        )
+    except Exception:  # noqa: BLE001 — MarkdownV2 is fiddly; never lose the reply
+        logger.exception("Agent MarkdownV2 send failed; falling back to plain text")
+        await chat.send_message(strip_markdown(body), reply_markup=reply_markup)
 
 
 @authorized_only

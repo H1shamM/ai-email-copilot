@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from app.telegram.formatting import (
+    agent_text_to_md2,
     chunk_messages,
     escape_markdown_v2,
     format_analysis_entry,
@@ -11,8 +12,32 @@ from app.telegram.formatting import (
     format_notification,
     format_unread_entry,
     sender_display_name,
+    strip_markdown,
 )
 from app.telegram import formatting
+
+
+def test_agent_text_to_md2_renders_bold_and_headers():
+    md2 = agent_text_to_md2("## Urgent\nStart with **the deploy failures** now.")
+    assert md2.startswith("*Urgent*")  # header -> bold
+    assert "*the deploy failures*" in md2  # **bold** -> *bold*
+    assert "**" not in md2 and "##" not in md2  # no literal markdown left
+
+
+def test_agent_text_to_md2_escapes_reserved_chars():
+    # A bare '.' and '(' must be escaped so MarkdownV2 doesn't choke.
+    md2 = agent_text_to_md2("Reply to priya@x.com (urgent).")
+    assert "priya@x\\.com" in md2
+    assert "\\(urgent\\)" in md2
+
+
+def test_agent_text_to_md2_converts_bullets():
+    assert "• item" in agent_text_to_md2("- item")
+
+
+def test_strip_markdown_removes_syntax():
+    plain = strip_markdown("## Head\n**bold** text\n- item")
+    assert plain == "Head\nbold text\n• item"
 
 
 def test_short_time_today_shows_clock(monkeypatch):
