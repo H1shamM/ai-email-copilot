@@ -194,8 +194,39 @@ async def test_inbox_lists_analyzed_rows(monkeypatch, authorized_update):
 @pytest.mark.asyncio
 async def test_inbox_replies_empty_when_none_analyzed(monkeypatch, authorized_update):
     monkeypatch.setattr(handlers.db, "get_recent_emails", lambda limit: [])
+    monkeypatch.setattr(handlers.db, "get_unprocessed_emails", list)
     await handlers.inbox(authorized_update, None)
     authorized_update.message.reply_text.assert_awaited_once_with("No analyzed emails yet.")
+
+
+@pytest.mark.asyncio
+async def test_inbox_shows_pending_banner_when_unprocessed(monkeypatch, authorized_update):
+    rows = [
+        {
+            "id": 4,
+            "sender": "a@x.com",
+            "subject": "s",
+            "ai_summary": "x",
+            "urgency_score": 7,
+            "processed_at": "t",
+        },
+    ]
+    monkeypatch.setattr(handlers.db, "get_recent_emails", lambda limit: rows)
+    monkeypatch.setattr(handlers.db, "count_analyzed_emails", lambda: 1)
+    monkeypatch.setattr(handlers.db, "get_unprocessed_emails", lambda: [{}, {}, {}])
+    await handlers.inbox(authorized_update, None)
+    text = _all_reply_texts(authorized_update)
+    assert "📥 3" in text  # banner counts unprocessed
+    assert "/analyze" in text
+
+
+@pytest.mark.asyncio
+async def test_inbox_empty_message_points_to_analyze_when_pending(monkeypatch, authorized_update):
+    monkeypatch.setattr(handlers.db, "get_recent_emails", lambda limit: [])
+    monkeypatch.setattr(handlers.db, "get_unprocessed_emails", lambda: [{}, {}])
+    await handlers.inbox(authorized_update, None)
+    msg = authorized_update.message.reply_text.await_args_list[-1].args[0]
+    assert "2 fetched" in msg and "/analyze" in msg
 
 
 @pytest.mark.asyncio
