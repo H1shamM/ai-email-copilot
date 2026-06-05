@@ -253,8 +253,11 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _send_chunks(update, blocks, "No emails to analyze.")
 
 
+INBOX_LOW_URGENCY = 5  # urgency below this is low-priority (green) — safe to bulk-clear
+
+
 def _build_inbox_keyboard(rows: list[dict]) -> InlineKeyboardMarkup | None:
-    """A tap-to-open button per analyzed email, two per row; None if empty."""
+    """Tap-to-open button per email (2/row) + a bulk-triage row; None if empty."""
     buttons = [
         InlineKeyboardButton(f"📖 #{row['id']}", callback_data=f"e:view:{row['id']}")
         for row in rows
@@ -262,27 +265,76 @@ def _build_inbox_keyboard(rows: list[dict]) -> InlineKeyboardMarkup | None:
     if not buttons:
         return None
     grid = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
+    grid.append(
+        [
+            InlineKeyboardButton("✅ Done all", callback_data="i:doneall"),
+            InlineKeyboardButton("🗄 Clear low", callback_data="i:clearlow"),
+        ]
+    )
     return InlineKeyboardMarkup(grid)
 
 
 @authorized_only
 async def inbox(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show the most recent analyzed emails from the DB with tap-to-open buttons."""
+    """Show the most recent analyzed emails from the DB with tap-to-open + bulk triage."""
     await _typing(update)
     limit = _list_limit(context, INBOX_DEFAULT_LIMIT)
     rows = db.get_recent_emails(limit=limit)
     analyzed = [row for row in rows if row.get("processed_at")]
+    if context is not None and getattr(context, "user_data", None) is not None:
+        context.user_data["inbox_shown"] = [
+            {"id": row["id"], "urgency": row.get("urgency_score")} for row in analyzed
+        ]
     blocks = [format_inbox_entry(row) for row in analyzed]
     if blocks:
         total = db.count_analyzed_emails()
-        footer = f"Showing {len(analyzed)} of {total} · tap a button below to open"
+        footer = f"Showing {len(analyzed)} of {total} · tap to open, or bulk-triage below"
         if total > len(analyzed) and limit < LIST_MAX_LIMIT:
             footer = (
                 f"Showing {len(analyzed)} of {total} · /inbox {min(limit * 2, LIST_MAX_LIMIT)} "
-                f"for more · tap a button below to open"
+                f"for more · tap to open, or bulk-triage below"
             )
         blocks.append(escape_markdown_v2(footer))
     await _send_chunks(update, blocks, "No analyzed emails yet.", _build_inbox_keyboard(analyzed))
+
+
+@authorized_only
+async def cb_inbox_done_all(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Mark every email shown in the last /inbox done in one tap."""
+    query = update.callback_query
+    shown = (context.user_data or {}).get("inbox_shown") or []
+    ids = [s["id"] for s in shown]
+    if not ids:
+        await query.answer("Nothing to clear")
+        await update.effective_chat.send_message("Nothing to mark done — run /inbox first.")
+        return
+    for email_id in ids:
+        db.mark_email_done(email_id)
+    context.user_data.pop("inbox_shown", None)
+    await query.answer(f"Marked {len(ids)} done")
+    await update.effective_chat.send_message(
+        f"✅ Marked {len(ids)} email{'s' if len(ids) != 1 else ''} done. /inbox to refresh."
+    )
+
+
+@authorized_only
+async def cb_inbox_clear_low(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Mark only the low-priority (urgency < 5) shown emails done, keeping the rest."""
+    query = update.callback_query
+    shown = (context.user_data or {}).get("inbox_shown") or []
+    low = [s["id"] for s in shown if (s.get("urgency") or 0) < INBOX_LOW_URGENCY]
+    if not low:
+        await query.answer("No low-priority emails")
+        await update.effective_chat.send_message("No low-priority emails to clear.")
+        return
+    for email_id in low:
+        db.mark_email_done(email_id)
+    kept = [s for s in shown if (s.get("urgency") or 0) >= INBOX_LOW_URGENCY]
+    context.user_data["inbox_shown"] = kept
+    await query.answer(f"Cleared {len(low)} low")
+    await update.effective_chat.send_message(
+        f"🗄 Cleared {len(low)} low-priority · {len(kept)} kept. /inbox to refresh."
+    )
 
 
 def _build_email_detail_keyboard(row: dict) -> InlineKeyboardMarkup:
@@ -876,6 +928,8 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(cb_email_view, pattern=r"^e:view:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_email_reply, pattern=r"^e:reply:\d+$"))
     application.add_handler(CallbackQueryHandler(cb_email_done, pattern=r"^e:done:\d+$"))
+    application.add_handler(CallbackQueryHandler(cb_inbox_done_all, pattern=r"^i:doneall$"))
+    application.add_handler(CallbackQueryHandler(cb_inbox_clear_low, pattern=r"^i:clearlow$"))
     application.add_handler(CallbackQueryHandler(cb_agent_approve, pattern=r"^a:approve$"))
     application.add_handler(CallbackQueryHandler(cb_agent_cancel, pattern=r"^a:cancel$"))
 

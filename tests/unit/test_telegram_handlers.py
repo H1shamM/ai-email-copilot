@@ -183,11 +183,12 @@ async def test_inbox_lists_analyzed_rows(monkeypatch, authorized_update):
     assert "\\#5" not in text  # the unprocessed row (#5) is not shown
     assert "🔴" in text
     assert "🟢" in text
-    assert "tap a button" in text.lower()  # footer points to the tap-to-open buttons
-    # tap-to-open keyboard carries one view button per analyzed email
+    assert "tap to open" in text.lower()  # footer points to the tap-to-open + bulk buttons
+    # tap-to-open keyboard carries one view button per analyzed email + bulk row
     markup = authorized_update.message.reply_text.await_args_list[-1].kwargs["reply_markup"]
     callbacks = {b.callback_data for kb_row in markup.inline_keyboard for b in kb_row}
-    assert callbacks == {"e:view:4", "e:view:6"}
+    assert {"e:view:4", "e:view:6"}.issubset(callbacks)
+    assert {"i:doneall", "i:clearlow"}.issubset(callbacks)
 
 
 @pytest.mark.asyncio
@@ -209,6 +210,74 @@ async def test_inbox_respects_count_arg(monkeypatch, authorized_update, reply_co
     reply_context.args = ["15"]
     await handlers.inbox(authorized_update, reply_context)
     assert captured["limit"] == 15
+
+
+@pytest.mark.asyncio
+async def test_inbox_stores_shown_ids_for_bulk_triage(
+    monkeypatch, authorized_update, reply_context
+):
+    rows = [
+        {
+            "id": 4,
+            "sender": "a@x.com",
+            "subject": "s",
+            "ai_summary": "x",
+            "urgency_score": 9,
+            "processed_at": "t",
+        },
+        {
+            "id": 6,
+            "sender": "b@x.com",
+            "subject": "s",
+            "ai_summary": "x",
+            "urgency_score": 3,
+            "processed_at": "t",
+        },
+    ]
+    monkeypatch.setattr(handlers.db, "get_recent_emails", lambda limit: rows)
+    monkeypatch.setattr(handlers.db, "count_analyzed_emails", lambda: 2)
+    await handlers.inbox(authorized_update, reply_context)
+    assert reply_context.user_data["inbox_shown"] == [
+        {"id": 4, "urgency": 9},
+        {"id": 6, "urgency": 3},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cb_inbox_done_all_marks_every_shown(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    reply_context.user_data = {"inbox_shown": [{"id": 4, "urgency": 9}, {"id": 6, "urgency": 3}]}
+    done: list = []
+    monkeypatch.setattr(handlers.db, "mark_email_done", lambda eid: done.append(eid))
+    update = _make_callback_update("i:doneall")
+    await handlers.cb_inbox_done_all(update, reply_context)
+    assert done == [4, 6]
+    assert "inbox_shown" not in reply_context.user_data
+
+
+@pytest.mark.asyncio
+async def test_cb_inbox_clear_low_marks_only_low(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    reply_context.user_data = {"inbox_shown": [{"id": 4, "urgency": 9}, {"id": 6, "urgency": 3}]}
+    done: list = []
+    monkeypatch.setattr(handlers.db, "mark_email_done", lambda eid: done.append(eid))
+    update = _make_callback_update("i:clearlow")
+    await handlers.cb_inbox_clear_low(update, reply_context)
+    assert done == [6]  # only the urgency-3 one
+    assert reply_context.user_data["inbox_shown"] == [{"id": 4, "urgency": 9}]  # high kept
+
+
+@pytest.mark.asyncio
+async def test_cb_inbox_done_all_handles_empty(monkeypatch, reply_context):
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
+    monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
+    reply_context.user_data = {}
+    update = _make_callback_update("i:doneall")
+    await handlers.cb_inbox_done_all(update, reply_context)
+    sent = update.effective_chat.send_message.await_args_list[-1].args[0]
+    assert "run /inbox first" in sent.lower()
 
 
 @pytest.mark.asyncio

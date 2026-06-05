@@ -164,6 +164,27 @@ def test_count_analyzed_emails_counts_only_processed():
     assert db.count_analyzed_emails() == 2
 
 
+def test_mark_email_done_removes_from_recent_and_count():
+    rid = db.insert_email(
+        {
+            "id": "arch1",
+            "thread_id": "t",
+            "sender": "a@a",
+            "subject": "s",
+            "snippet": "",
+            "date": "",
+        }
+    )
+    db.update_analysis("arch1", {"summary": "x", "category": "Work", "urgency_score": 2})
+    assert any(r["id"] == rid for r in db.get_recent_emails())
+    before = db.count_analyzed_emails()
+
+    db.mark_email_done(rid)
+
+    assert all(r["id"] != rid for r in db.get_recent_emails())  # archived → gone from inbox
+    assert db.count_analyzed_emails() == before - 1
+
+
 def _make_email(gmail_id: str = "msg_d") -> int:
     """Insert an email and return its sqlite rowid."""
     return db.insert_email(

@@ -199,10 +199,12 @@ def get_email_by_row_id(row_id: int) -> dict | None:
 
 
 def get_recent_emails(limit: int = 50) -> list[dict]:
+    """Recent non-archived emails — Mark Done sets is_archived, clearing them here."""
     conn = get_connection()
     try:
         rows = conn.execute(
-            "SELECT * FROM emails ORDER BY created_at DESC, id DESC LIMIT ?", (limit,)
+            "SELECT * FROM emails WHERE is_archived = 0 ORDER BY created_at DESC, id DESC LIMIT ?",
+            (limit,),
         ).fetchall()
         return [dict(row) for row in rows]
     finally:
@@ -210,11 +212,11 @@ def get_recent_emails(limit: int = 50) -> list[dict]:
 
 
 def count_analyzed_emails() -> int:
-    """Total analyzed emails, for the /inbox "showing N of M" footer."""
+    """Count analyzed, non-archived emails for the /inbox "showing N of M" footer."""
     conn = get_connection()
     try:
         row = conn.execute(
-            "SELECT COUNT(*) AS n FROM emails WHERE processed_at IS NOT NULL"
+            "SELECT COUNT(*) AS n FROM emails WHERE processed_at IS NOT NULL AND is_archived = 0"
         ).fetchone()
         return int(row["n"]) if row else 0
     finally:
