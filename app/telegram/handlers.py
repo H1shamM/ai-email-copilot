@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 from functools import wraps
 
 from telegram import (
@@ -820,7 +821,7 @@ async def agent_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await _safe_delete(status)
 
     if not pending:
-        await _send_agent_reply(chat, text or "Done — nothing to do.")
+        await _send_agent_reply(chat, text or "Done — nothing to do.", _email_refs_keyboard(text))
         return
 
     context.user_data["agent_pending"] = pending
@@ -837,6 +838,26 @@ async def agent_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         ]
     )
     await _send_agent_reply(chat, "\n".join(lines), keyboard)
+
+
+_EMAIL_REF_RE = re.compile(r"#(\d+)")
+
+
+def _email_refs_keyboard(text: str | None) -> InlineKeyboardMarkup | None:
+    """Tap-to-open buttons for any #<id> emails the agent referenced (max 6)."""
+    if not text:
+        return None
+    seen: list[str] = []
+    for match in _EMAIL_REF_RE.finditer(text):
+        if match.group(1) not in seen:
+            seen.append(match.group(1))
+        if len(seen) >= 6:
+            break
+    if not seen:
+        return None
+    buttons = [InlineKeyboardButton(f"📖 #{i}", callback_data=f"e:view:{i}") for i in seen]
+    grid = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
+    return InlineKeyboardMarkup(grid)
 
 
 async def _send_agent_reply(

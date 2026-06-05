@@ -1351,6 +1351,34 @@ async def test_agent_command_text_only_no_pending(monkeypatch, authorized_update
     assert "agent_pending" not in reply_context.user_data
 
 
+def test_email_refs_keyboard_extracts_deduped_ids():
+    kb = handlers._email_refs_keyboard("Start with #15359, then #15356 and #15359 again.")
+    cbs = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert cbs == ["e:view:15359", "e:view:15356"]  # deduped, in order
+
+
+def test_email_refs_keyboard_none_without_ids():
+    assert handlers._email_refs_keyboard("nothing to open here") is None
+    assert handlers._email_refs_keyboard(None) is None
+
+
+@pytest.mark.asyncio
+async def test_agent_reply_attaches_email_ref_buttons(
+    monkeypatch, authorized_update, reply_context
+):
+    monkeypatch.setattr(handlers.agent, "run_agent", lambda instr: ("Deal with #42 first.", []))
+    reply_context.args = ["what", "is", "urgent"]
+    await handlers.agent_command(authorized_update, reply_context)
+
+    markups = [
+        c.kwargs["reply_markup"]
+        for c in authorized_update.effective_chat.send_message.await_args_list
+        if c.kwargs.get("reply_markup")
+    ]
+    cbs = [b.callback_data for kb in markups for row in kb.inline_keyboard for b in row]
+    assert "e:view:42" in cbs  # the agent's #42 reference became a tap-to-open button
+
+
 @pytest.mark.asyncio
 async def test_agent_command_deletes_status_message(monkeypatch, authorized_update, reply_context):
     status = MagicMock()
