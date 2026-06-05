@@ -285,8 +285,14 @@ async def inbox(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data["inbox_shown"] = [
             {"id": row["id"], "urgency": row.get("urgency_score")} for row in analyzed
         ]
+    pending = len(db.get_unprocessed_emails())
     blocks = [format_inbox_entry(row) for row in analyzed]
     if blocks:
+        if pending:
+            blocks.insert(
+                0,
+                escape_markdown_v2(f"📥 {pending} new email(s) not analyzed yet — /analyze to add"),
+            )
         total = db.count_analyzed_emails()
         footer = f"Showing {len(analyzed)} of {total} · tap to open, or bulk-triage below"
         if total > len(analyzed) and limit < LIST_MAX_LIMIT:
@@ -295,7 +301,11 @@ async def inbox(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 f"for more · tap to open, or bulk-triage below"
             )
         blocks.append(escape_markdown_v2(footer))
-    await _send_chunks(update, blocks, "No analyzed emails yet.", _build_inbox_keyboard(analyzed))
+
+    empty_msg = "No analyzed emails yet."
+    if pending:
+        empty_msg = f"No analyzed emails yet — 📥 {pending} fetched. Run /analyze to see them."
+    await _send_chunks(update, blocks, empty_msg, _build_inbox_keyboard(analyzed))
 
 
 @authorized_only
