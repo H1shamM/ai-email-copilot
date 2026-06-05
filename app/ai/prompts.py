@@ -19,6 +19,16 @@ TONE_INSTRUCTIONS: dict[str, str] = {
         "Under three sentences. Direct, no filler. Skip the salutation if it "
         "would push the message over three sentences."
     ),
+    "voice": (
+        "Reply naturally in my own voice and typical length — match the greeting, "
+        "phrasing, and sign-off from my writing examples below."
+    ),
+}
+
+# Nudges that tweak a generated draft on demand (the Shorter/Warmer buttons).
+REPLY_MODIFIERS: dict[str, str] = {
+    "shorter": "Make this reply noticeably shorter and more direct.",
+    "warmer": "Make this reply warmer, friendlier, and more personable.",
 }
 
 
@@ -53,15 +63,25 @@ def _style_block(style_samples: list[str] | None) -> str:
     )
 
 
-def build_reply_prompt(email: dict, tone: str, style_samples: list[str] | None = None) -> str:
-    """Render the prompt for a single tone, optionally in the user's own voice."""
+def build_reply_prompt(
+    email: dict,
+    tone: str,
+    style_samples: list[str] | None = None,
+    modifier: str | None = None,
+) -> str:
+    """Render the prompt for a single tone, optionally in the user's voice + a nudge."""
     if tone not in TONE_INSTRUCTIONS:
         raise ValueError(f"Unknown tone {tone!r}; allowed: {sorted(TONE_INSTRUCTIONS)}")
+    instructions = TONE_INSTRUCTIONS[tone]
+    if modifier:
+        if modifier not in REPLY_MODIFIERS:
+            raise ValueError(f"Unknown modifier {modifier!r}; allowed: {sorted(REPLY_MODIFIERS)}")
+        instructions = f"{instructions} {REPLY_MODIFIERS[modifier]}"
     return REPLY_PROMPT.format(
         tone=tone,
         sender=email.get("sender", "Unknown"),
         subject=email.get("subject", "(no subject)"),
         body=email.get("body") or email.get("snippet", ""),
-        tone_instructions=TONE_INSTRUCTIONS[tone],
+        tone_instructions=instructions,
         style_block=_style_block(style_samples),
     )

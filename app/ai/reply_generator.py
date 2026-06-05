@@ -28,9 +28,14 @@ def _get_client() -> Anthropic:
     return _client
 
 
-def _generate_one(email: dict, tone: str, style_samples: list[str] | None = None) -> str | None:
-    """Generate a single reply (optionally in the user's voice) or None on failure."""
-    prompt = build_reply_prompt(email, tone, style_samples)
+def _generate_one(
+    email: dict,
+    tone: str,
+    style_samples: list[str] | None = None,
+    modifier: str | None = None,
+) -> str | None:
+    """Generate a single reply (optionally in the user's voice + a nudge) or None."""
+    prompt = build_reply_prompt(email, tone, style_samples, modifier)
     try:
         message = _get_client().messages.create(
             model=MODEL,
@@ -74,3 +79,8 @@ def generate_replies(email: dict, tones: tuple[str, ...] = TONES) -> dict[str, s
 def regenerate_one(email: dict, tone: str) -> str | None:
     """Regenerate a single tone — used by the Telegram 'Regenerate' button."""
     return _generate_one(email, tone, voice.get_voice_samples())
+
+
+def generate_voice_reply(email: dict, modifier: str | None = None) -> str | None:
+    """Generate one reply in the user's voice (the default /reply draft + nudges)."""
+    return _generate_one(email, "voice", voice.get_voice_samples(), modifier)

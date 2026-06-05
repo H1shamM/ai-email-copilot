@@ -485,40 +485,34 @@ async def test_reply_command_rejects_unanalyzed_email(
 
 
 @pytest.mark.asyncio
-async def test_reply_command_persists_drafts_and_renders(
+async def test_reply_command_persists_one_voice_draft_and_renders(
     monkeypatch, authorized_update, reply_context
 ):
     row = _analyzed_email_row()
     monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: row)
     monkeypatch.setattr(
-        handlers,
-        "generate_replies",
-        lambda email: {"professional": "Pro reply", "friendly": "Hey", "brief": "Yes"},
+        handlers, "generate_voice_reply", lambda email, modifier=None: "In my voice."
     )
 
     inserted: list[tuple] = []
 
     def fake_insert(email_id, tone, text):
         inserted.append((email_id, tone, text))
-        return len(inserted)
+        return 1
 
     monkeypatch.setattr(handlers.db, "insert_draft_reply", fake_insert)
     monkeypatch.setattr(
         handlers.db,
         "get_draft_by_id",
-        lambda did: {
-            "id": did,
-            "tone": inserted[did - 1][1],
-            "draft_text": inserted[did - 1][2],
-        },
+        lambda did: {"id": did, "tone": "voice", "draft_text": "In my voice."},
     )
     reply_context.args = ["5"]
     await handlers.reply_command(authorized_update, reply_context)
 
-    assert {t for _, t, _ in inserted} == {"professional", "friendly", "brief"}
+    assert inserted == [(5, "voice", "In my voice.")]  # one draft, voice tone
     text = _all_reply_texts(authorized_update)
     assert "Drafting" in text
-    assert "Professional" in text or "🎩" in text
+    assert "In my voice" in text  # the draft body is rendered
 
 
 @pytest.mark.asyncio
@@ -526,28 +520,26 @@ async def test_reply_command_handles_empty_generation(
     monkeypatch, authorized_update, reply_context
 ):
     monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: _analyzed_email_row())
-    monkeypatch.setattr(handlers, "generate_replies", lambda _: {})
+    monkeypatch.setattr(handlers, "generate_voice_reply", lambda *a, **k: None)
     reply_context.args = ["5"]
     await handlers.reply_command(authorized_update, reply_context)
-    assert "Couldn't draft replies" in _all_reply_texts(authorized_update)
+    assert "Couldn't draft a reply" in _all_reply_texts(authorized_update)
 
 
 @pytest.mark.asyncio
-async def test_reply_drafting_message_has_realistic_eta(monkeypatch, authorized_update):
-    """The progress message must not under-promise the ~1 min generation time."""
+async def test_reply_drafting_message_mentions_voice(monkeypatch, authorized_update):
     monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: _analyzed_email_row())
-    monkeypatch.setattr(handlers, "generate_replies", lambda _: {"brief": "Yes"})
+    monkeypatch.setattr(handlers, "generate_voice_reply", lambda *a, **k: "Yes")
     monkeypatch.setattr(handlers.db, "insert_draft_reply", lambda *_: 1)
     monkeypatch.setattr(
         handlers.db,
         "get_draft_by_id",
-        lambda did: {"id": did, "tone": "brief", "draft_text": "Yes"},
+        lambda did: {"id": did, "tone": "voice", "draft_text": "Yes"},
     )
     await handlers._run_reply_flow(authorized_update, 5)
     text = _all_reply_texts(authorized_update)
     assert "Drafting" in text
-    assert "~10s" not in text
-    assert "minute" in text
+    assert "voice" in text.lower()  # one fast voice draft, not "3 replies… a minute"
 
 
 @pytest.mark.asyncio
@@ -559,12 +551,12 @@ async def test_reply_command_skips_no_reply_sender(monkeypatch, authorized_updat
 
     gen_called = False
 
-    def fake_generate(_):
+    def fake_generate(*a, **k):
         nonlocal gen_called
         gen_called = True
-        return {"brief": "Yes"}
+        return "Yes"
 
-    monkeypatch.setattr(handlers, "generate_replies", fake_generate)
+    monkeypatch.setattr(handlers, "generate_voice_reply", fake_generate)
     reply_context.args = ["5"]
     await handlers.reply_command(authorized_update, reply_context)
 
@@ -744,40 +736,40 @@ async def test_cb_skip_marks_all_pending_drafts_skipped(monkeypatch, reply_conte
 
 
 @pytest.mark.asyncio
-async def test_cb_regenerate_replaces_only_chosen_tone(monkeypatch, reply_context):
+async def test_cb_reply_nudge_reworks_draft_in_voice(monkeypatch, reply_context):
     monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
     monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
-    monkeypatch.setattr(
-        handlers.db,
-        "get_draft_by_id",
-        lambda _: {
-            "id": 9,
-            "email_id": 5,
-            "tone": "brief",
-            "draft_text": "old",
-            "status": "pending",
-        },
-    )
+    draft = {"id": 9, "email_id": 5, "tone": "voice", "draft_text": "old", "status": "pending"}
+    monkeypatch.setattr(handlers.db, "get_draft_by_id", lambda _: draft)
     monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: _analyzed_email_row())
-    monkeypatch.setattr(handlers, "regenerate_one", lambda email, tone: "fresh take")
 
+    gen_args: list = []
+
+    def fake_gen(email, modifier=None):
+        gen_args.append(modifier)
+        return "shorter take"
+
+    monkeypatch.setattr(handlers, "generate_voice_reply", fake_gen)
     updates: list[tuple] = []
-    monkeypatch.setattr(
-        handlers.db,
-        "update_draft_status",
-        lambda did, status, **kw: updates.append((did, status, kw)),
-    )
 
-    update = _make_callback_update("r:regen:9")
-    await handlers.cb_regenerate(update, reply_context)
+    def fake_update(did, status, **kw):
+        updates.append((did, status, kw))
+        if "draft_text" in kw:
+            draft["draft_text"] = kw["draft_text"]  # reflect the persisted update
 
-    assert updates == [(9, "pending", {"draft_text": "fresh take"})]
-    msg = update.effective_chat.send_message.await_args_list[-1].args[0]
-    assert "brief" in msg
+    monkeypatch.setattr(handlers.db, "update_draft_status", fake_update)
+
+    update = _make_callback_update("r:shorter:9")
+    await handlers.cb_reply_nudge(update, reply_context)
+
+    assert gen_args == ["shorter"]  # the modifier reached the generator
+    assert updates == [(9, "pending", {"draft_text": "shorter take"})]
+    sent = " ".join(c.args[0] for c in update.effective_chat.send_message.await_args_list if c.args)
+    assert "shorter take" in sent  # re-rendered draft
 
 
 @pytest.mark.asyncio
-async def test_cb_regenerate_reports_failure(monkeypatch, reply_context):
+async def test_cb_reply_nudge_reports_failure(monkeypatch, reply_context):
     monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "42")
     monkeypatch.setattr(handlers.db, "get_or_create_telegram_user", lambda _: {})
     monkeypatch.setattr(
@@ -786,17 +778,17 @@ async def test_cb_regenerate_reports_failure(monkeypatch, reply_context):
         lambda _: {
             "id": 9,
             "email_id": 5,
-            "tone": "brief",
+            "tone": "voice",
             "draft_text": "old",
             "status": "pending",
         },
     )
     monkeypatch.setattr(handlers.db, "get_email_by_row_id", lambda _: _analyzed_email_row())
-    monkeypatch.setattr(handlers, "regenerate_one", lambda *_: None)
-    update = _make_callback_update("r:regen:9")
-    await handlers.cb_regenerate(update, reply_context)
+    monkeypatch.setattr(handlers, "generate_voice_reply", lambda *a, **k: None)
+    update = _make_callback_update("r:warmer:9")
+    await handlers.cb_reply_nudge(update, reply_context)
     msg = update.effective_chat.send_message.await_args_list[-1].args[0]
-    assert "Regenerate failed" in msg
+    assert "warmer" in msg.lower()
 
 
 @pytest.mark.asyncio
@@ -1005,16 +997,12 @@ async def test_run_reply_flow_falls_back_to_plain_text_on_markdown_error(
         "get_email_by_row_id",
         lambda _: _analyzed_email_row(),
     )
-    monkeypatch.setattr(
-        handlers,
-        "generate_replies",
-        lambda _: {"professional": "P", "friendly": "F", "brief": "B"},
-    )
+    monkeypatch.setattr(handlers, "generate_voice_reply", lambda *a, **k: "P")
     monkeypatch.setattr(handlers.db, "insert_draft_reply", lambda *_: 1)
     monkeypatch.setattr(
         handlers.db,
         "get_draft_by_id",
-        lambda did: {"id": did, "tone": "professional", "draft_text": "P"},
+        lambda did: {"id": did, "tone": "voice", "draft_text": "P"},
     )
 
     calls = []
