@@ -54,6 +54,8 @@ logger = logging.getLogger(__name__)
 
 WELCOME = (
     "Welcome to AI Email Copilot.\n\n"
+    "👉 Start with /inbox to see your priority emails — tap one to read it and act.\n"
+    "Or just ask: /agent what's urgent today?\n\n"
     "Commands:\n"
     "/unread - list unread emails\n"
     "/analyze - run AI analysis on unprocessed emails\n"
