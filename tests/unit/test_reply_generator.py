@@ -34,12 +34,32 @@ def _stub_client_per_tone(by_tone: dict[str, str]) -> MagicMock:
     return client
 
 
+@pytest.fixture(autouse=True)
+def _no_voice(monkeypatch):
+    """Default: no learned voice, so tests don't hit live Gmail."""
+    monkeypatch.setattr(reply_generator.voice, "get_voice_samples", lambda *a, **k: [])
+
+
 @pytest.fixture
 def patch_client(monkeypatch):
     def _apply(client):
         monkeypatch.setattr(reply_generator, "_get_client", lambda: client)
 
     return _apply
+
+
+def test_generate_replies_injects_voice_samples_into_prompt(patch_client, monkeypatch):
+    monkeypatch.setattr(
+        reply_generator.voice, "get_voice_samples", lambda *a, **k: ["Cheers, Hisham"]
+    )
+    client = _stub_client("draft")
+    patch_client(client)
+
+    reply_generator.generate_replies({"sender": "a", "subject": "s", "body": "b"})
+
+    prompt = client.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "Cheers, Hisham" in prompt  # the user's voice sample reached the prompt
+    assert "MY WRITING VOICE" in prompt
 
 
 def test_generate_replies_returns_dict_keyed_by_tone(patch_client):

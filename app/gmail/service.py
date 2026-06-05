@@ -198,3 +198,31 @@ def get_recent_emails(max_results=50, unread_only=True):  # pragma: no cover
             continue
 
     return emails
+
+
+def get_sent_emails(max_results=15):  # pragma: no cover
+    """Fetch the user's recent sent emails, to learn their writing voice."""
+    service = get_email_service()
+    try:
+        results = (
+            service.users()
+            .messages()
+            .list(userId="me", maxResults=max_results, q="in:sent")
+            .execute()
+        )
+    except HttpError as error:
+        raise RuntimeError(f"Failed to list sent emails: {error}")
+
+    emails = []
+    for message in results.get("messages", []):
+        try:
+            msg_data = (
+                service.users()
+                .messages()
+                .get(userId="me", id=message["id"], format="full")
+                .execute()
+            )
+            emails.append(parse_email(msg_data))
+        except HttpError:
+            continue
+    return emails

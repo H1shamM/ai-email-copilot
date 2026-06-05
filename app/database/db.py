@@ -223,6 +223,31 @@ def count_analyzed_emails() -> int:
         conn.close()
 
 
+def set_preference(key: str, value: str) -> None:
+    """Upsert a user preference (used to cache the learned writing voice)."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO user_preferences (key, value, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+            "updated_at = excluded.updated_at",
+            (key, value, datetime.now().isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_preference(key: str) -> str | None:
+    """Read a user preference value, or None if unset."""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT value FROM user_preferences WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+    finally:
+        conn.close()
+
+
 def get_unprocessed_emails() -> list[dict]:
     """Get emails that haven't been analyzed yet."""
     conn = get_connection()
