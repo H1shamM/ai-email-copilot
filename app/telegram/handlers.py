@@ -551,9 +551,7 @@ async def cb_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await update.effective_chat.send_message("That draft no longer exists.")
         return -1
     context.user_data["editing_draft_id"] = draft_id
-    await update.effective_chat.send_message(
-        f"Send the revised {draft['tone']} reply (or /cancel to abort)."
-    )
+    await update.effective_chat.send_message("Type your revised reply (or /cancel to abort).")
     return WAITING_FOR_TEXT
 
 
@@ -567,10 +565,16 @@ async def cb_edit_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if not new_text:
         await update.message.reply_text("Empty message — edit cancelled.")
         return -1
+    # Don't send: update the draft and re-show it with the action keyboard so the
+    # user reviews and explicitly taps Send (editing shouldn't fire off email).
     db.update_draft_status(draft_id, "edited", draft_text=new_text)
-    await _typing(update)
-    await update.message.reply_text("✍️ Sending edited reply…")
-    await _send_draft(update, context, draft_id, source="edit")
+    draft = db.get_draft_by_id(draft_id)
+    email = db.get_email_by_row_id(draft["email_id"]) if draft else None
+    if email is None:
+        await update.message.reply_text("Original email not found.")
+        return -1
+    await update.message.reply_text("✏ Draft updated — review and tap Send.")
+    await _send_draft_message(update.effective_chat, email, draft)
     return -1
 
 
